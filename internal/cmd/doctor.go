@@ -115,6 +115,44 @@ func runDoctor(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println()
+	fmt.Println("C extension support (PGXS):")
+
+	// Check Make
+	if checkCommand("make", "--version") {
+		version := getCommandOutput("make", "--version")
+		// Get just the first line
+		if idx := strings.Index(version, "\n"); idx > 0 {
+			version = version[:idx]
+		}
+		fmt.Printf("✓ Make: %s\n", strings.TrimSpace(version))
+	} else {
+		fmt.Println("✗ Make: not installed")
+		fmt.Println("  Install: apt install build-essential (Debian/Ubuntu)")
+	}
+
+	// Check C compiler (gcc or cc)
+	ccFound := false
+	if checkCommand("gcc", "--version") {
+		version := getCommandOutput("gcc", "--version")
+		if idx := strings.Index(version, "\n"); idx > 0 {
+			version = version[:idx]
+		}
+		fmt.Printf("✓ GCC: %s\n", strings.TrimSpace(version))
+		ccFound = true
+	} else if checkCommand("cc", "--version") {
+		version := getCommandOutput("cc", "--version")
+		if idx := strings.Index(version, "\n"); idx > 0 {
+			version = version[:idx]
+		}
+		fmt.Printf("✓ CC: %s\n", strings.TrimSpace(version))
+		ccFound = true
+	}
+	if !ccFound {
+		fmt.Println("✗ C compiler: not installed")
+		fmt.Println("  Install: apt install build-essential (Debian/Ubuntu)")
+	}
+
+	fmt.Println()
 	if allOk {
 		fmt.Println("All prerequisites satisfied!")
 	} else {

@@ -14,6 +14,7 @@ type Entry struct {
 	Version     string    `json:"version"`
 	Source      string    `json:"source"`
 	PgVersion   string    `json:"pg_version"`
+	BuildSystem string    `json:"build_system,omitempty"` // "pgrx" or "pgxs"
 	InstalledAt time.Time `json:"installed_at"`
 }
 

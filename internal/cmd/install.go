@@ -7,18 +7,26 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/matroidbe/pgbrew/internal/builder"
 	"github.com/matroidbe/pgbrew/internal/cellar"
 	"github.com/matroidbe/pgbrew/internal/github"
-	"github.com/matroidbe/pgbrew/internal/pgrx"
 	"github.com/spf13/cobra"
+
+	// Register builders
+	_ "github.com/matroidbe/pgbrew/internal/builder"
 )
 
 var installCmd = &cobra.Command{
 	Use:   "install <source>",
 	Short: "Install a PostgreSQL extension",
-	Long: `Install a pgrx-based PostgreSQL extension from GitHub or a local directory.
+	Long: `Install a PostgreSQL extension from GitHub or a local directory.
+
+Supported extension types:
+  - pgrx (Rust): Projects with Cargo.toml containing pgrx dependency
+  - pgxs (C):    Projects with Makefile using PGXS and a .control file
 
 Examples:
+  pgx install github.com/pgvector/pgvector
   pgx install github.com/supabase/pg_graphql
   pgx install github.com/supabase/pg_graphql@v1.5.0
   pgx install github.com/user/repo/extensions/myext@main
@@ -85,26 +93,30 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		defer os.RemoveAll(cleanupDir)
 	}
 
-	// Verify it's a pgrx project
-	if !pgrx.IsProject(extDir) {
-		return fmt.Errorf("not a pgrx project: %s", extDir)
+	// Detect the appropriate builder for this project
+	b, err := builder.DetectBuilder(extDir)
+	if err != nil {
+		return err
 	}
 
-	// Get extension name from Cargo.toml
-	extName, err := pgrx.GetExtensionName(extDir)
+	fmt.Printf("Detected %s project\n", b.Name())
+
+	// Get extension name
+	extName, err := b.GetExtensionName(extDir)
 	if err != nil {
 		return fmt.Errorf("failed to get extension name: %w", err)
 	}
 
 	fmt.Printf("Building %s...\n", extName)
 
-	// Build and install with pgrx
-	if err := pgrx.Install(extDir); err != nil {
+	// Build and install
+	pgConfig := getPgConfigPath()
+	if err := b.Install(extDir, pgConfig); err != nil {
 		return fmt.Errorf("failed to install extension: %w", err)
 	}
 
-	// Get version from Cargo.toml
-	version, _ := pgrx.GetVersion(extDir)
+	// Get version
+	version, _ := b.GetVersion(extDir)
 	if version == "" {
 		version = "unknown"
 	}
@@ -114,10 +126,11 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	// Record installation
 	entry := cellar.Entry{
-		Name:      extName,
-		Version:   version,
-		Source:    source,
-		PgVersion: pgVersion,
+		Name:        extName,
+		Version:     version,
+		Source:      source,
+		PgVersion:   pgVersion,
+		BuildSystem: b.Name(),
 	}
 	if err := cellar.Add(entry); err != nil {
 		return fmt.Errorf("failed to record installation: %w", err)
@@ -127,7 +140,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Run: CREATE EXTENSION %s;\n", extName)
 
 	// Check if extension needs shared_preload_libraries
-	if pgrx.NeedsSharedPreload(extDir) {
+	if b.NeedsSharedPreload(extDir) {
 		pgMajor := getPgVersion()
 		pgMajorInt := 0
 		fmt.Sscanf(pgMajor, "%d", &pgMajorInt)

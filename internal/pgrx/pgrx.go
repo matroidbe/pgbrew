@@ -181,12 +181,37 @@ func GetInstalledPgrxVersion() (string, error) {
 // EnsurePgrxVersion installs the required cargo-pgrx version if needed.
 func EnsurePgrxVersion(requiredVersion string) error {
 	installed, err := GetInstalledPgrxVersion()
-	if err == nil && installed == requiredVersion {
-		return nil // Already have the right version
+
+	// Check if installed version matches required (including partial version matches)
+	if err == nil {
+		if installed == requiredVersion {
+			return nil // Exact match
+		}
+		// Check partial version match (e.g., "0.12" matches "0.12.9")
+		if strings.HasPrefix(installed, requiredVersion+".") || strings.HasPrefix(installed, requiredVersion) && !strings.Contains(requiredVersion, ".") {
+			return nil // Partial match (major or major.minor)
+		}
+		// Check major.minor match
+		installedParts := strings.Split(installed, ".")
+		requiredParts := strings.Split(requiredVersion, ".")
+		if len(installedParts) >= 2 && len(requiredParts) >= 2 {
+			if installedParts[0] == requiredParts[0] && installedParts[1] == requiredParts[1] {
+				return nil // Same major.minor version
+			}
+		}
+	}
+
+	// Normalize version for cargo install - if it's a partial version like "0.12",
+	// we need to use a caret range "^0.12" to let cargo find the latest patch
+	installVersion := requiredVersion
+	versionParts := strings.Split(requiredVersion, ".")
+	if len(versionParts) < 3 {
+		// Partial version, use caret range
+		installVersion = "^" + requiredVersion
 	}
 
 	fmt.Printf("Installing cargo-pgrx %s (current: %s)...\n", requiredVersion, installed)
-	cmd := exec.Command("cargo", "install", "cargo-pgrx", "--version", requiredVersion, "--locked")
+	cmd := exec.Command("cargo", "install", "cargo-pgrx", "--version", installVersion, "--locked")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

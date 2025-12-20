@@ -222,6 +222,61 @@ func EnsurePgrxVersion(requiredVersion string) error {
 	return nil
 }
 
+// getPgMajorVersion returns the PostgreSQL major version from pg_config.
+func getPgMajorVersion(pgConfig string) (string, error) {
+	cmd := exec.Command(pgConfig, "--version")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	// Output: "PostgreSQL 16.0" or "PostgreSQL 16.4"
+	parts := strings.Fields(string(output))
+	if len(parts) < 2 {
+		return "", fmt.Errorf("could not parse pg_config version")
+	}
+	verStr := parts[1]
+	if idx := strings.Index(verStr, "."); idx > 0 {
+		return verStr[:idx], nil
+	}
+	return verStr, nil
+}
+
+// isPgrxInitialized checks if pgrx is initialized for the given PostgreSQL version.
+func isPgrxInitialized(pgMajorVersion string) bool {
+	cmd := exec.Command("cargo", "pgrx", "info", "pg-config", "pg"+pgMajorVersion)
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	result := strings.TrimSpace(string(output))
+	return result != "" && !strings.Contains(result, "not managed")
+}
+
+// EnsurePgrxInit ensures pgrx is initialized for the current PostgreSQL version.
+func EnsurePgrxInit(pgConfig string) error {
+	pgMajorVersion, err := getPgMajorVersion(pgConfig)
+	if err != nil {
+		return fmt.Errorf("could not determine PostgreSQL version: %w", err)
+	}
+
+	if isPgrxInitialized(pgMajorVersion) {
+		return nil
+	}
+
+	fmt.Printf("Initializing pgrx for pg%s...\n", pgMajorVersion)
+	arg := fmt.Sprintf("--pg%s=%s", pgMajorVersion, pgConfig)
+	cmd := exec.Command("cargo", "pgrx", "init", arg)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to initialize pgrx for pg%s: %w", pgMajorVersion, err)
+	}
+
+	fmt.Printf("pgrx initialized for pg%s\n", pgMajorVersion)
+	return nil
+}
+
 // Install builds and installs the extension using cargo pgrx install.
 func Install(dir string) error {
 	// Check pgrx version compatibility
@@ -230,6 +285,17 @@ func Install(dir string) error {
 		if err := EnsurePgrxVersion(requiredVersion); err != nil {
 			return err
 		}
+	}
+
+	// Determine pg_config path
+	pgConfig := os.Getenv("PG_CONFIG")
+	if pgConfig == "" {
+		pgConfig = "pg_config"
+	}
+
+	// Ensure pgrx is initialized for this PostgreSQL version
+	if err := EnsurePgrxInit(pgConfig); err != nil {
+		return err
 	}
 
 	// Build command args

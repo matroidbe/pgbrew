@@ -106,14 +106,23 @@ func (b *PgxsBuilder) Install(dir string, pgConfig string) error {
 		pgConfig = "pg_config"
 	}
 
+	// Build make arguments
+	// Override CC to use the system's default gcc, since PostgreSQL's pg_config
+	// may reference a specific version (e.g., gcc-12) that isn't installed
+	makeArgs := []string{
+		"PG_CONFIG=" + pgConfig,
+		"CC=gcc",
+	}
+
 	// Run make clean (ignore errors - may not have been built before)
-	cleanCmd := exec.Command("make", "clean", "PG_CONFIG="+pgConfig)
+	cleanArgs := append([]string{"clean"}, makeArgs...)
+	cleanCmd := exec.Command("make", cleanArgs...)
 	cleanCmd.Dir = dir
 	cleanCmd.Run() // Ignore errors
 
 	// Run make
 	fmt.Println("Running make...")
-	makeCmd := exec.Command("make", "PG_CONFIG="+pgConfig)
+	makeCmd := exec.Command("make", makeArgs...)
 	makeCmd.Dir = dir
 	makeCmd.Stdout = os.Stdout
 	makeCmd.Stderr = os.Stderr
@@ -123,7 +132,8 @@ func (b *PgxsBuilder) Install(dir string, pgConfig string) error {
 
 	// Run make install
 	fmt.Println("Running make install...")
-	installCmd := exec.Command("make", "install", "PG_CONFIG="+pgConfig)
+	installArgs := append([]string{"install"}, makeArgs...)
+	installCmd := exec.Command("make", installArgs...)
 	installCmd.Dir = dir
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr

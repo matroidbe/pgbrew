@@ -1,6 +1,6 @@
 # pgbrew
 
-Homebrew-inspired package manager for pgrx-based PostgreSQL extensions.
+Homebrew-inspired package manager for PostgreSQL extensions. Supports both **pgrx** (Rust) and **PGXS** (C) extensions.
 
 ## Installation
 
@@ -19,7 +19,10 @@ go install github.com/matroidbe/pgbrew/cmd/pgx@latest
 # Check prerequisites
 pgx doctor
 
-# Install extension from GitHub
+# Install C extension from GitHub
+pgx install github.com/pgvector/pgvector
+
+# Install Rust/pgrx extension from GitHub
 pgx install github.com/supabase/pg_graphql
 
 # Install specific version/tag/branch
@@ -59,17 +62,27 @@ PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config pgx doctor
 
 ## Requirements
 
+**For all extensions:**
 - Go 1.21+ (for building pgx)
-- Rust (for building pgrx extensions)
-- cargo-pgrx (`cargo install cargo-pgrx`)
 - PostgreSQL with development headers
+- Git
+
+**For C extensions (PGXS):**
+- GCC or compatible C compiler
+- Make
+
+**For Rust extensions (pgrx):**
+- Rust toolchain
+- cargo-pgrx (`cargo install cargo-pgrx`)
 
 ## How It Works
 
 1. `pgx install` clones the repository (or uses local path)
-2. Detects pgrx extension (looks for `Cargo.toml` with pgrx dependency)
-3. Automatically installs the correct `cargo-pgrx` version to match the extension
-4. Runs `cargo pgrx install --release` to build and install
+2. Auto-detects extension type:
+   - **pgrx (Rust)**: `Cargo.toml` with pgrx dependency
+   - **PGXS (C)**: `Makefile` with PGXS + `.control` file
+3. For pgrx: Automatically installs the correct `cargo-pgrx` version
+4. Builds and installs the extension
 5. Tracks installation in `~/.pgbrew/installed.json`
 
 ## Automatic cargo-pgrx Version Management
@@ -84,7 +97,15 @@ This means you can install extensions built with different pgrx versions without
 
 ## Tested Extensions
 
-The following pgrx extensions have been verified to work with pgx:
+### C Extensions (PGXS)
+
+| Extension | Description | Install Command |
+|-----------|-------------|-----------------|
+| [pgvector](https://github.com/pgvector/pgvector) | Vector similarity search | `pgx install github.com/pgvector/pgvector` |
+| [pg_cron](https://github.com/citusdata/pg_cron) | Cron-based job scheduler | `pgx install github.com/citusdata/pg_cron` |
+| [pg_partman](https://github.com/pgpartman/pg_partman) | Partition management | `pgx install github.com/pgpartman/pg_partman` |
+
+### Rust Extensions (pgrx)
 
 | Extension | Description | Install Command |
 |-----------|-------------|-----------------|

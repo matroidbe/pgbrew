@@ -24,3 +24,9 @@ vendor/
 # OS
 .DS_Store
 Thumbs.db
+
+# Built binary
+pgx
+
+# Test directories
+pg_hello/

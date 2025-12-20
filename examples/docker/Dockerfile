@@ -22,20 +22,20 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Install pgx (installs to ~/.local/bin)
-RUN curl -fsSL https://raw.githubusercontent.com/matroidbe/pgbrew/main/install.sh | bash
-ENV PATH="/root/.local/bin:${PATH}"
+# Build and install pgx from source (includes auto pgrx-init feature)
+WORKDIR /tmp
+RUN git clone https://github.com/matroidbe/pgbrew.git && \
+    cd pgbrew && \
+    go build -o /usr/local/bin/pgx ./cmd/pgx && \
+    rm -rf /tmp/pgbrew
 
 # Install pg_kafka using pgx
 RUN pgx install github.com/matroidbe/pg_extensions/extensions/pg_kafka
 
-# Copy custom PostgreSQL config for background worker extensions
-COPY postgresql.conf /etc/postgresql/postgresql.conf
-
-# Copy initialization script
-COPY init.sql /docker-entrypoint-initdb.d/
-
-# Use custom config
-CMD ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+# Copy initialization script with proper permissions
+COPY --chmod=644 init.sql /docker-entrypoint-initdb.d/
 
 EXPOSE 5432
+
+# Configure PostgreSQL for pg_kafka background worker
+CMD ["postgres", "-c", "shared_preload_libraries=pg_kafka", "-c", "log_statement=all"]

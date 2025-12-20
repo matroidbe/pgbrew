@@ -2,11 +2,20 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// getPgConfigPath returns the path to pg_config, checking PG_CONFIG env var first
+func getPgConfigPath() string {
+	if pgConfig := os.Getenv("PG_CONFIG"); pgConfig != "" {
+		return pgConfig
+	}
+	return "pg_config"
+}
 
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
@@ -50,19 +59,24 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		allOk = false
 	}
 
-	// Check pg_config
-	if checkCommand("pg_config", "--version") {
-		version := getCommandOutput("pg_config", "--version")
+	// Check pg_config (supports PG_CONFIG env var)
+	pgConfigPath := getPgConfigPath()
+	if checkCommand(pgConfigPath, "--version") {
+		version := getCommandOutput(pgConfigPath, "--version")
 		fmt.Printf("✓ PostgreSQL: %s\n", strings.TrimSpace(version))
 
 		// Show additional info
-		pgLibDir := getCommandOutput("pg_config", "--pkglibdir")
-		pgShareDir := getCommandOutput("pg_config", "--sharedir")
+		pgLibDir := getCommandOutput(pgConfigPath, "--pkglibdir")
+		pgShareDir := getCommandOutput(pgConfigPath, "--sharedir")
 		fmt.Printf("  Library dir: %s\n", strings.TrimSpace(pgLibDir))
 		fmt.Printf("  Share dir: %s\n", strings.TrimSpace(pgShareDir))
+		if os.Getenv("PG_CONFIG") != "" {
+			fmt.Printf("  Using PG_CONFIG: %s\n", pgConfigPath)
+		}
 	} else {
 		fmt.Println("✗ PostgreSQL: pg_config not found")
 		fmt.Println("  Install PostgreSQL or add pg_config to PATH")
+		fmt.Println("  Or set PG_CONFIG=/path/to/pg_config")
 		allOk = false
 	}
 

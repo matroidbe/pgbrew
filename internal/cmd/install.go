@@ -14,13 +14,16 @@ import (
 )
 
 var installCmd = &cobra.Command{
-	Use:   "install <github.com/user/repo[/path]>",
-	Short: "Install a PostgreSQL extension from GitHub",
-	Long: `Install a pgrx-based PostgreSQL extension directly from a GitHub repository.
+	Use:   "install <source>",
+	Short: "Install a PostgreSQL extension",
+	Long: `Install a pgrx-based PostgreSQL extension from GitHub or a local directory.
 
 Examples:
-  pgx install github.com/matroidbe/pg_extensions/extensions/pg_kafka
-  pgx install github.com/supabase/pg_graphql`,
+  pgx install github.com/supabase/pg_graphql
+  pgx install github.com/supabase/pg_graphql@v1.5.0
+  pgx install github.com/user/repo/extensions/myext@main
+  pgx install ./pg_hello
+  pgx install /path/to/extension`,
 	Args: cobra.ExactArgs(1),
 	RunE: runInstall,
 }
@@ -28,30 +31,58 @@ Examples:
 func runInstall(cmd *cobra.Command, args []string) error {
 	source := args[0]
 
-	// Parse GitHub URL
-	repo, subpath, err := github.ParseURL(source)
-	if err != nil {
-		return fmt.Errorf("invalid source: %w", err)
+	var extDir string
+	var cleanupDir string
+
+	// Check if source is a local path
+	if isLocalPath(source) {
+		absPath, err := filepath.Abs(source)
+		if err != nil {
+			return fmt.Errorf("invalid path: %w", err)
+		}
+
+		// Verify directory exists
+		if _, err := os.Stat(absPath); os.IsNotExist(err) {
+			return fmt.Errorf("directory not found: %s", absPath)
+		}
+
+		extDir = absPath
+		fmt.Printf("Installing from %s...\n", absPath)
+	} else {
+		// Parse GitHub URL
+		repo, subpath, version, err := github.ParseURL(source)
+		if err != nil {
+			return fmt.Errorf("invalid source: %w", err)
+		}
+
+		fmt.Printf("Installing from %s...\n", source)
+
+		// Clone repository to temp directory
+		tmpDir, err := os.MkdirTemp("", "pgbrew-*")
+		if err != nil {
+			return fmt.Errorf("failed to create temp directory: %w", err)
+		}
+		cleanupDir = tmpDir
+
+		if version != "" {
+			fmt.Printf("Cloning %s@%s...\n", repo, version)
+		} else {
+			fmt.Printf("Cloning %s...\n", repo)
+		}
+		if err := github.Clone(repo, tmpDir, version); err != nil {
+			return fmt.Errorf("failed to clone repository: %w", err)
+		}
+
+		// Determine extension directory
+		extDir = tmpDir
+		if subpath != "" {
+			extDir = filepath.Join(tmpDir, subpath)
+		}
 	}
 
-	fmt.Printf("Installing from %s...\n", source)
-
-	// Clone repository to temp directory
-	tmpDir, err := os.MkdirTemp("", "pgbrew-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	fmt.Printf("Cloning %s...\n", repo)
-	if err := github.Clone(repo, tmpDir); err != nil {
-		return fmt.Errorf("failed to clone repository: %w", err)
-	}
-
-	// Determine extension directory
-	extDir := tmpDir
-	if subpath != "" {
-		extDir = filepath.Join(tmpDir, subpath)
+	// Cleanup temp directory if created
+	if cleanupDir != "" {
+		defer os.RemoveAll(cleanupDir)
 	}
 
 	// Verify it's a pgrx project
@@ -99,7 +130,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 }
 
 func getPgVersion() string {
-	cmd := exec.Command("pg_config", "--version")
+	cmd := exec.Command(getPgConfigPath(), "--version")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -114,4 +145,17 @@ func getPgVersion() string {
 		return version
 	}
 	return ""
+}
+
+// isLocalPath checks if the source is a local filesystem path
+func isLocalPath(source string) bool {
+	// Starts with ./ or ../ or /
+	if strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../") || strings.HasPrefix(source, "/") {
+		return true
+	}
+	// Check if it's an existing directory (handles bare names like "pg_hello")
+	if info, err := os.Stat(source); err == nil && info.IsDir() {
+		return true
+	}
+	return false
 }

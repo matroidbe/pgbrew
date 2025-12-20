@@ -60,8 +60,16 @@ func GetVersion(dir string) (string, error) {
 
 // Install builds and installs the extension using cargo pgrx install.
 func Install(dir string) error {
+	// Build command args
+	args := []string{"pgrx", "install", "--release"}
+
+	// Pass pg_config path if PG_CONFIG is set
+	if pgConfig := os.Getenv("PG_CONFIG"); pgConfig != "" {
+		args = append(args, "--pg-config", pgConfig)
+	}
+
 	// Run cargo pgrx install
-	cmd := exec.Command("cargo", "pgrx", "install", "--release")
+	cmd := exec.Command("cargo", args...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

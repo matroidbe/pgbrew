@@ -61,9 +61,21 @@ func runDoctor(cmd *cobra.Command, args []string) {
 
 	// Check pg_config (supports PG_CONFIG env var)
 	pgConfigPath := getPgConfigPath()
+	var pgMajorVersion string
 	if checkCommand(pgConfigPath, "--version") {
 		version := getCommandOutput(pgConfigPath, "--version")
 		fmt.Printf("✓ PostgreSQL: %s\n", strings.TrimSpace(version))
+
+		// Extract major version (e.g., "PostgreSQL 16.0" -> "16")
+		parts := strings.Fields(version)
+		if len(parts) >= 2 {
+			verStr := parts[1]
+			if idx := strings.Index(verStr, "."); idx > 0 {
+				pgMajorVersion = verStr[:idx]
+			} else {
+				pgMajorVersion = verStr
+			}
+		}
 
 		// Show additional info
 		pgLibDir := getCommandOutput(pgConfigPath, "--pkglibdir")
@@ -78,6 +90,19 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		fmt.Println("  Install PostgreSQL or add pg_config to PATH")
 		fmt.Println("  Or set PG_CONFIG=/path/to/pg_config")
 		allOk = false
+	}
+
+	// Check if pgrx is initialized for this PostgreSQL version
+	if pgMajorVersion != "" && checkCommand("cargo", "pgrx", "--version") {
+		pgrxPgConfig := getCommandOutput("cargo", "pgrx", "info", "pg-config", "pg"+pgMajorVersion)
+		pgrxPgConfig = strings.TrimSpace(pgrxPgConfig)
+		if pgrxPgConfig == "" || strings.Contains(pgrxPgConfig, "not managed") {
+			fmt.Printf("✗ pgrx not initialized for pg%s\n", pgMajorVersion)
+			fmt.Printf("  Run: cargo pgrx init --pg%s=%s\n", pgMajorVersion, pgConfigPath)
+			allOk = false
+		} else {
+			fmt.Printf("✓ pgrx initialized for pg%s\n", pgMajorVersion)
+		}
 	}
 
 	// Check Git

@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+var fixFlag bool
 
 // getPgConfigPath returns the path to pg_config, checking PG_CONFIG env var first
 func getPgConfigPath() string {
@@ -20,8 +23,15 @@ func getPgConfigPath() string {
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Check system prerequisites",
-	Long:  `Verifies that all required tools are installed for building and installing PostgreSQL extensions.`,
-	Run:   runDoctor,
+	Long: `Verifies that all required tools are installed for building and installing PostgreSQL extensions.
+
+Use --fix to automatically install missing user-space tools (Rust, cargo-pgrx, pgrx init).
+System packages (git, make, gcc) require manual installation with sudo.`,
+	Run: runDoctor,
+}
+
+func init() {
+	doctorCmd.Flags().BoolVar(&fixFlag, "fix", false, "Attempt to install missing prerequisites")
 }
 
 func runDoctor(cmd *cobra.Command, args []string) {
@@ -29,33 +39,60 @@ func runDoctor(cmd *cobra.Command, args []string) {
 	fmt.Println()
 
 	allOk := true
+	fixedCount := 0
 
 	// Check Rust
-	if checkCommand("rustc", "--version") {
+	rustOk := checkCommand("rustc", "--version")
+	if rustOk {
 		version := getCommandOutput("rustc", "--version")
 		fmt.Printf("✓ Rust: %s\n", strings.TrimSpace(version))
 	} else {
 		fmt.Println("✗ Rust: not installed")
-		fmt.Println("  Install: https://rustup.rs/")
+		if fixFlag {
+			if err := installRust(); err != nil {
+				fmt.Printf("  ✗ Failed: %v\n", err)
+			} else {
+				rustOk = true
+				fixedCount++
+			}
+		} else {
+			fmt.Println("  Install: https://rustup.rs/")
+		}
 		allOk = false
 	}
 
-	// Check Cargo
-	if checkCommand("cargo", "--version") {
+	// Check Cargo (comes with Rust)
+	cargoOk := checkCommand("cargo", "--version")
+	if cargoOk {
 		version := getCommandOutput("cargo", "--version")
 		fmt.Printf("✓ Cargo: %s\n", strings.TrimSpace(version))
 	} else {
 		fmt.Println("✗ Cargo: not installed")
+		if !rustOk {
+			fmt.Println("  (Will be installed with Rust)")
+		}
 		allOk = false
 	}
 
 	// Check cargo-pgrx
-	if checkCommand("cargo", "pgrx", "--version") {
+	pgrxOk := checkCommand("cargo", "pgrx", "--version")
+	if pgrxOk {
 		version := getCommandOutput("cargo", "pgrx", "--version")
 		fmt.Printf("✓ cargo-pgrx: %s\n", strings.TrimSpace(version))
 	} else {
 		fmt.Println("✗ cargo-pgrx: not installed")
-		fmt.Println("  Install: cargo install cargo-pgrx")
+		if fixFlag && cargoOk {
+			if err := installCargoPgrx(); err != nil {
+				fmt.Printf("  ✗ Failed: %v\n", err)
+			} else {
+				pgrxOk = true
+				fixedCount++
+			}
+		} else if !fixFlag {
+			fmt.Println("  Install: cargo install cargo-pgrx")
+		} else {
+			fmt.Println("  (Requires Cargo to be installed first)")
+		}
 		allOk = false
 	}
 
@@ -87,18 +124,26 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		}
 	} else {
 		fmt.Println("✗ PostgreSQL: pg_config not found")
-		fmt.Println("  Install PostgreSQL or add pg_config to PATH")
+		fmt.Printf("  Install: %s\n", getInstallHint("postgresql"))
 		fmt.Println("  Or set PG_CONFIG=/path/to/pg_config")
 		allOk = false
 	}
 
 	// Check if pgrx is initialized for this PostgreSQL version
-	if pgMajorVersion != "" && checkCommand("cargo", "pgrx", "--version") {
+	if pgMajorVersion != "" && pgrxOk {
 		pgrxPgConfig := getCommandOutput("cargo", "pgrx", "info", "pg-config", "pg"+pgMajorVersion)
 		pgrxPgConfig = strings.TrimSpace(pgrxPgConfig)
 		if pgrxPgConfig == "" || strings.Contains(pgrxPgConfig, "not managed") {
 			fmt.Printf("✗ pgrx not initialized for pg%s\n", pgMajorVersion)
-			fmt.Printf("  Run: cargo pgrx init --pg%s=%s\n", pgMajorVersion, pgConfigPath)
+			if fixFlag {
+				if err := initPgrx(pgMajorVersion, pgConfigPath); err != nil {
+					fmt.Printf("  ✗ Failed: %v\n", err)
+				} else {
+					fixedCount++
+				}
+			} else {
+				fmt.Printf("  Run: cargo pgrx init --pg%s=%s\n", pgMajorVersion, pgConfigPath)
+			}
 			allOk = false
 		} else {
 			fmt.Printf("✓ pgrx initialized for pg%s\n", pgMajorVersion)
@@ -111,6 +156,7 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		fmt.Printf("✓ Git: %s\n", strings.TrimSpace(version))
 	} else {
 		fmt.Println("✗ Git: not installed")
+		fmt.Printf("  Install: %s\n", getInstallHint("git"))
 		allOk = false
 	}
 
@@ -127,7 +173,7 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		fmt.Printf("✓ Make: %s\n", strings.TrimSpace(version))
 	} else {
 		fmt.Println("✗ Make: not installed")
-		fmt.Println("  Install: apt install build-essential (Debian/Ubuntu)")
+		fmt.Printf("  Install: %s\n", getInstallHint("build-essential"))
 	}
 
 	// Check C compiler (gcc or cc)
@@ -149,14 +195,20 @@ func runDoctor(cmd *cobra.Command, args []string) {
 	}
 	if !ccFound {
 		fmt.Println("✗ C compiler: not installed")
-		fmt.Println("  Install: apt install build-essential (Debian/Ubuntu)")
+		fmt.Printf("  Install: %s\n", getInstallHint("build-essential"))
 	}
 
 	fmt.Println()
-	if allOk {
+	if fixFlag && fixedCount > 0 {
+		fmt.Printf("Fixed %d issue(s).\n", fixedCount)
+	}
+	if allOk || (fixFlag && fixedCount > 0) {
 		fmt.Println("All prerequisites satisfied!")
 	} else {
 		fmt.Println("Some prerequisites are missing. Please install them before continuing.")
+		if !fixFlag {
+			fmt.Println("Run 'pgx doctor --fix' to auto-install Rust toolchain components.")
+		}
 	}
 }
 
@@ -172,4 +224,83 @@ func getCommandOutput(name string, args ...string) string {
 		return ""
 	}
 	return string(output)
+}
+
+// installRust installs Rust via rustup
+func installRust() error {
+	fmt.Println("  → Installing Rust via rustup...")
+
+	// Download and run rustup installer with -y for non-interactive
+	cmd := exec.Command("sh", "-c", "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install Rust: %w", err)
+	}
+
+	// Source cargo env for current session
+	cargoEnv := os.ExpandEnv("$HOME/.cargo/env")
+	if _, err := os.Stat(cargoEnv); err == nil {
+		os.Setenv("PATH", os.ExpandEnv("$HOME/.cargo/bin")+":"+os.Getenv("PATH"))
+	}
+
+	fmt.Println("  ✓ Rust installed successfully")
+	fmt.Println("  Note: Run 'source ~/.cargo/env' or restart your shell to use Rust")
+	return nil
+}
+
+// installCargoPgrx installs cargo-pgrx
+func installCargoPgrx() error {
+	fmt.Println("  → Installing cargo-pgrx...")
+
+	cmd := exec.Command("cargo", "install", "cargo-pgrx", "--locked")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install cargo-pgrx: %w", err)
+	}
+
+	fmt.Println("  ✓ cargo-pgrx installed successfully")
+	return nil
+}
+
+// initPgrx initializes pgrx for the given PostgreSQL version
+func initPgrx(pgMajorVersion, pgConfigPath string) error {
+	fmt.Printf("  → Initializing pgrx for pg%s...\n", pgMajorVersion)
+
+	arg := fmt.Sprintf("--pg%s=%s", pgMajorVersion, pgConfigPath)
+	cmd := exec.Command("cargo", "pgrx", "init", arg)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to initialize pgrx: %w", err)
+	}
+
+	fmt.Printf("  ✓ pgrx initialized for pg%s\n", pgMajorVersion)
+	return nil
+}
+
+// getInstallHint returns the install command for system packages based on OS
+func getInstallHint(pkg string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return fmt.Sprintf("brew install %s", pkg)
+	case "linux":
+		// Check for common distros
+		if _, err := os.Stat("/etc/debian_version"); err == nil {
+			return fmt.Sprintf("sudo apt install %s", pkg)
+		}
+		if _, err := os.Stat("/etc/redhat-release"); err == nil {
+			return fmt.Sprintf("sudo dnf install %s", pkg)
+		}
+		if _, err := os.Stat("/etc/arch-release"); err == nil {
+			return fmt.Sprintf("sudo pacman -S %s", pkg)
+		}
+		return fmt.Sprintf("Install %s using your package manager", pkg)
+	default:
+		return fmt.Sprintf("Install %s using your package manager", pkg)
+	}
 }

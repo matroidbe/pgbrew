@@ -66,18 +66,19 @@ func GetPgrxVersion(dir string) (string, error) {
 		return "", err
 	}
 
-	// Look for pgrx = "X.Y.Z" or pgrx = { version = "X.Y.Z", ... }
+	// Look for pgrx = "X.Y.Z" or pgrx = "=X.Y.Z" or pgrx = { version = "X.Y.Z", ... }
 	content := string(data)
 
-	// Try simple format: pgrx = "0.14.0"
-	re := regexp.MustCompile(`pgrx\s*=\s*"([^"]+)"`)
+	// Try simple format: pgrx = "0.14.0" or pgrx = "=0.14.0"
+	// The =? makes the leading = optional
+	re := regexp.MustCompile(`pgrx\s*=\s*"=?([0-9][^"]*)"`)
 	matches := re.FindStringSubmatch(content)
 	if len(matches) >= 2 {
 		return matches[1], nil
 	}
 
-	// Try table format: pgrx = { version = "0.14.0", ... }
-	re = regexp.MustCompile(`pgrx\s*=\s*\{[^}]*version\s*=\s*"([^"]+)"`)
+	// Try table format: pgrx = { version = "0.14.0", ... } or { version = "=0.14.0", ... }
+	re = regexp.MustCompile(`pgrx\s*=\s*\{[^}]*version\s*=\s*"=?([0-9][^"]*)"`)
 	matches = re.FindStringSubmatch(content)
 	if len(matches) >= 2 {
 		return matches[1], nil

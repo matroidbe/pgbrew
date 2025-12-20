@@ -22,6 +22,10 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+# Install cargo-pgrx and initialize for pg16
+RUN cargo install cargo-pgrx --locked && \
+    cargo pgrx init --pg16=/usr/bin/pg_config
+
 # Install pgx (installs to ~/.local/bin)
 RUN curl -fsSL https://raw.githubusercontent.com/matroidbe/pgbrew/main/install.sh | bash
 ENV PATH="/root/.local/bin:${PATH}"

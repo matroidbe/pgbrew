@@ -58,8 +58,78 @@ func GetVersion(dir string) (string, error) {
 	return string(matches[1]), nil
 }
 
+// GetPgrxVersion extracts the pgrx version from Cargo.toml.
+func GetPgrxVersion(dir string) (string, error) {
+	cargoPath := filepath.Join(dir, "Cargo.toml")
+	data, err := os.ReadFile(cargoPath)
+	if err != nil {
+		return "", err
+	}
+
+	// Look for pgrx = "X.Y.Z" or pgrx = { version = "X.Y.Z", ... }
+	content := string(data)
+
+	// Try simple format: pgrx = "0.14.0"
+	re := regexp.MustCompile(`pgrx\s*=\s*"([^"]+)"`)
+	matches := re.FindStringSubmatch(content)
+	if len(matches) >= 2 {
+		return matches[1], nil
+	}
+
+	// Try table format: pgrx = { version = "0.14.0", ... }
+	re = regexp.MustCompile(`pgrx\s*=\s*\{[^}]*version\s*=\s*"([^"]+)"`)
+	matches = re.FindStringSubmatch(content)
+	if len(matches) >= 2 {
+		return matches[1], nil
+	}
+
+	return "", fmt.Errorf("could not find pgrx version in Cargo.toml")
+}
+
+// GetInstalledPgrxVersion returns the installed cargo-pgrx version.
+func GetInstalledPgrxVersion() (string, error) {
+	cmd := exec.Command("cargo", "pgrx", "--version")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	// Output: "cargo-pgrx 0.12.9"
+	parts := strings.Fields(string(output))
+	if len(parts) >= 2 {
+		return parts[1], nil
+	}
+	return "", fmt.Errorf("could not parse cargo-pgrx version")
+}
+
+// EnsurePgrxVersion installs the required cargo-pgrx version if needed.
+func EnsurePgrxVersion(requiredVersion string) error {
+	installed, err := GetInstalledPgrxVersion()
+	if err == nil && installed == requiredVersion {
+		return nil // Already have the right version
+	}
+
+	fmt.Printf("Installing cargo-pgrx %s (current: %s)...\n", requiredVersion, installed)
+	cmd := exec.Command("cargo", "install", "cargo-pgrx", "--version", requiredVersion, "--locked")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install cargo-pgrx %s: %w", requiredVersion, err)
+	}
+
+	return nil
+}
+
 // Install builds and installs the extension using cargo pgrx install.
 func Install(dir string) error {
+	// Check pgrx version compatibility
+	requiredVersion, err := GetPgrxVersion(dir)
+	if err == nil && requiredVersion != "" {
+		if err := EnsurePgrxVersion(requiredVersion); err != nil {
+			return err
+		}
+	}
+
 	// Build command args
 	args := []string{"pgrx", "install", "--release"}
 

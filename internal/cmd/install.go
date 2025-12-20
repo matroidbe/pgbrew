@@ -126,6 +126,22 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\n✓ Successfully installed %s %s\n", extName, version)
 	fmt.Printf("  Run: CREATE EXTENSION %s;\n", extName)
 
+	// Check if extension needs shared_preload_libraries
+	if pgrx.NeedsSharedPreload(extDir) {
+		pgMajor := getPgVersion()
+		pgMajorInt := 0
+		fmt.Sscanf(pgMajor, "%d", &pgMajorInt)
+
+		// Most background worker extensions need shared_preload_libraries on PG < 17
+		if pgMajorInt > 0 && pgMajorInt < 17 {
+			fmt.Println()
+			fmt.Println("⚠ This extension uses background workers.")
+			fmt.Println("  You may need to add it to shared_preload_libraries in postgresql.conf:")
+			fmt.Printf("    shared_preload_libraries = '%s'\n", extName)
+			fmt.Println("  Then restart PostgreSQL.")
+		}
+	}
+
 	return nil
 }
 

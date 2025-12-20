@@ -9,6 +9,53 @@ import (
 	"strings"
 )
 
+// NeedsSharedPreload checks if the extension uses background workers
+// which require shared_preload_libraries configuration.
+func NeedsSharedPreload(dir string) bool {
+	return checkDirForBgWorker(filepath.Join(dir, "src"))
+}
+
+func checkDirForBgWorker(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+
+	for _, entry := range entries {
+		fullPath := filepath.Join(dir, entry.Name())
+
+		if entry.IsDir() {
+			// Check for parallel_worker or bgworker directory names
+			name := strings.ToLower(entry.Name())
+			if strings.Contains(name, "worker") || strings.Contains(name, "bgw") {
+				return true
+			}
+			// Recurse into subdirectories
+			if checkDirForBgWorker(fullPath) {
+				return true
+			}
+		} else if strings.HasSuffix(entry.Name(), ".rs") {
+			content, err := os.ReadFile(fullPath)
+			if err != nil {
+				continue
+			}
+
+			// Look for background worker indicators in pgrx
+			contentStr := string(content)
+			if strings.Contains(contentStr, "BackgroundWorker") ||
+				strings.Contains(contentStr, "bgworker") ||
+				strings.Contains(contentStr, "RegisterDynamicBackgroundWorker") ||
+				strings.Contains(contentStr, "SharedMemoryInit") ||
+				strings.Contains(contentStr, "max_parallel_workers") ||
+				strings.Contains(contentStr, "ParallelWorker") {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // IsProject checks if the directory contains a pgrx-based Cargo project.
 func IsProject(dir string) bool {
 	cargoPath := filepath.Join(dir, "Cargo.toml")
@@ -66,25 +113,54 @@ func GetPgrxVersion(dir string) (string, error) {
 		return "", err
 	}
 
-	// Look for pgrx = "X.Y.Z" or pgrx = "=X.Y.Z" or pgrx = { version = "X.Y.Z", ... }
 	content := string(data)
 
+	// Check if using workspace dependency (pgrx.workspace = true)
+	if strings.Contains(content, "pgrx.workspace") {
+		// Look for workspace Cargo.toml in parent directories
+		parentDir := filepath.Dir(dir)
+		for parentDir != "/" && parentDir != "." {
+			workspaceCargo := filepath.Join(parentDir, "Cargo.toml")
+			if workspaceData, err := os.ReadFile(workspaceCargo); err == nil {
+				workspaceContent := string(workspaceData)
+				// Check if this is a workspace with pgrx dependency
+				if strings.Contains(workspaceContent, "[workspace") {
+					version := extractPgrxVersion(workspaceContent)
+					if version != "" {
+						return version, nil
+					}
+				}
+			}
+			parentDir = filepath.Dir(parentDir)
+		}
+	}
+
+	// Try to extract version directly from this Cargo.toml
+	version := extractPgrxVersion(content)
+	if version != "" {
+		return version, nil
+	}
+
+	return "", fmt.Errorf("could not find pgrx version in Cargo.toml")
+}
+
+// extractPgrxVersion extracts pgrx version from Cargo.toml content
+func extractPgrxVersion(content string) string {
 	// Try simple format: pgrx = "0.14.0" or pgrx = "=0.14.0"
-	// The =? makes the leading = optional
 	re := regexp.MustCompile(`pgrx\s*=\s*"=?([0-9][^"]*)"`)
 	matches := re.FindStringSubmatch(content)
 	if len(matches) >= 2 {
-		return matches[1], nil
+		return matches[1]
 	}
 
 	// Try table format: pgrx = { version = "0.14.0", ... } or { version = "=0.14.0", ... }
 	re = regexp.MustCompile(`pgrx\s*=\s*\{[^}]*version\s*=\s*"=?([0-9][^"]*)"`)
 	matches = re.FindStringSubmatch(content)
 	if len(matches) >= 2 {
-		return matches[1], nil
+		return matches[1]
 	}
 
-	return "", fmt.Errorf("could not find pgrx version in Cargo.toml")
+	return ""
 }
 
 // GetInstalledPgrxVersion returns the installed cargo-pgrx version.

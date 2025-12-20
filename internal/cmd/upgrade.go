@@ -67,7 +67,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Installing to %s...\n", currentExe)
 
 	// On Linux, we can't overwrite a running binary directly.
-	// Rename the old one first, then move the new one in place.
+	// Rename the old one first, then copy the new one in place.
 	oldExe := currentExe + ".old"
 
 	// Remove any previous .old file
@@ -78,8 +78,8 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to rename current executable: %w", err)
 	}
 
-	// Move new executable into place
-	if err := os.Rename(newExe, currentExe); err != nil {
+	// Copy new executable into place (can't use Rename across filesystems)
+	if err := copyFile(newExe, currentExe); err != nil {
 		// Try to restore the old one
 		os.Rename(oldExe, currentExe)
 		return fmt.Errorf("failed to install new executable: %w", err)
@@ -90,4 +90,13 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("✓ pgx upgraded successfully!")
 	return nil
+}
+
+// copyFile copies a file from src to dst with executable permissions
+func copyFile(src, dst string) error {
+	input, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, input, 0755)
 }

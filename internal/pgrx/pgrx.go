@@ -277,20 +277,46 @@ func EnsurePgrxInit(pgConfig string) error {
 	return nil
 }
 
+// hasMakefileWithInstall checks if the directory has a custom Makefile
+// with an install target (but not a PGXS makefile).
+func hasMakefileWithInstall(dir string) bool {
+	content, err := os.ReadFile(filepath.Join(dir, "Makefile"))
+	if err != nil {
+		return false
+	}
+	s := string(content)
+	// Has install target but is NOT a PGXS makefile
+	return strings.Contains(s, "install:") && !strings.Contains(s, "PGXS")
+}
+
 // Install builds and installs the extension using cargo pgrx install.
 func Install(dir string) error {
+	// Determine pg_config path
+	pgConfig := os.Getenv("PG_CONFIG")
+	if pgConfig == "" {
+		pgConfig = "pg_config"
+	}
+
+	// Check if custom Makefile exists with install target
+	// This allows pgrx projects to have custom build steps (e.g., venv setup)
+	if hasMakefileWithInstall(dir) {
+		fmt.Println("==> Found Makefile with install target, using make...")
+		cmd := exec.Command("make", "install", "PG_CONFIG="+pgConfig)
+		cmd.Dir = dir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("make install failed: %w", err)
+		}
+		return nil
+	}
+
 	// Check pgrx version compatibility
 	requiredVersion, err := GetPgrxVersion(dir)
 	if err == nil && requiredVersion != "" {
 		if err := EnsurePgrxVersion(requiredVersion); err != nil {
 			return err
 		}
-	}
-
-	// Determine pg_config path
-	pgConfig := os.Getenv("PG_CONFIG")
-	if pgConfig == "" {
-		pgConfig = "pg_config"
 	}
 
 	// Ensure pgrx is initialized for this PostgreSQL version

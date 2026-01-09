@@ -31,22 +31,28 @@ func runList(cmd *cobra.Command, args []string) error {
 		return runListAll()
 	}
 
+	// Get extension directory from pg_config for display
+	pgConfigPath := getPgConfigPath()
+	shareDir := strings.TrimSpace(getCommandOutput(pgConfigPath, "--sharedir"))
+	extDir := filepath.Join(shareDir, "extension")
+
 	entries, err := cellar.List()
 	if err != nil {
 		return fmt.Errorf("failed to list extensions: %w", err)
 	}
 
 	if len(entries) == 0 {
-		fmt.Println("No extensions installed via pgx.")
+		fmt.Printf("No extensions installed via pgbrew in %s\n", extDir)
 		fmt.Println("Use --all to see all PostgreSQL extensions.")
 		return nil
 	}
 
-	fmt.Println("Installed extensions:")
-	fmt.Println()
+	fmt.Printf("Extensions installed via pgbrew (%s):\n\n", extDir)
 	for _, e := range entries {
-		fmt.Printf("  %s %s (pg%s)\n", e.Name, e.Version, e.PgVersion)
-		fmt.Printf("    Source: %s\n", e.Source)
+		fmt.Printf("  %s %s\n", e.Name, e.Version)
+		if e.Source != "" {
+			fmt.Printf("    Source: %s\n", e.Source)
+		}
 	}
 
 	return nil

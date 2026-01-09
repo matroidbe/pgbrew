@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -24,11 +26,22 @@ type Cellar struct {
 }
 
 func getCellarPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	// Get extension directory from pg_config
+	pgConfig := os.Getenv("PG_CONFIG")
+	if pgConfig == "" {
+		pgConfig = "pg_config"
 	}
-	return filepath.Join(home, ".pgbrew", "installed.json"), nil
+
+	cmd := exec.Command(pgConfig, "--sharedir")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get sharedir from pg_config: %w", err)
+	}
+
+	shareDir := strings.TrimSpace(string(output))
+	extDir := filepath.Join(shareDir, "extension")
+
+	return filepath.Join(extDir, ".pgbrew.json"), nil
 }
 
 func load() (*Cellar, error) {

@@ -34,6 +34,9 @@ pgx install github.com/user/repo/extensions/myext@main
 # Install from local directory
 pgx install ./my_extension
 
+# Install to system PostgreSQL (requires sudo)
+pgx install --sudo github.com/pgvector/pgvector
+
 # List installed extensions
 pgx list
 
@@ -51,6 +54,16 @@ pgx uninstall pg_graphql
 pgx upgrade
 ```
 
+## Installing to System PostgreSQL
+
+System-installed PostgreSQL typically has extension directories owned by root. Use the `--sudo` flag to install with elevated permissions:
+
+```bash
+pgx install --sudo github.com/pgvector/pgvector
+```
+
+This runs the installation step (`make install` or `cargo pgrx install`) with sudo while keeping the build step as your regular user.
+
 ## Multiple PostgreSQL Versions
 
 Use the `PG_CONFIG` environment variable to target a specific PostgreSQL installation:
@@ -58,6 +71,9 @@ Use the `PG_CONFIG` environment variable to target a specific PostgreSQL install
 ```bash
 PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config pgx install github.com/user/repo
 PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config pgx doctor
+
+# Combine with --sudo for system PostgreSQL
+PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config pgx install --sudo github.com/pgvector/pgvector
 ```
 
 ## Requirements

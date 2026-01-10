@@ -97,8 +97,9 @@ func parseControlVersion(controlPath string) (string, error) {
 }
 
 // Install builds and installs the extension using make.
-func (b *PgxsBuilder) Install(dir string, pgConfig string) error {
+func (b *PgxsBuilder) Install(dir string, opts InstallOptions) error {
 	// Determine pg_config path
+	pgConfig := opts.PgConfig
 	if pgConfig == "" {
 		pgConfig = os.Getenv("PG_CONFIG")
 	}
@@ -130,10 +131,17 @@ func (b *PgxsBuilder) Install(dir string, pgConfig string) error {
 		return fmt.Errorf("make failed: %w", err)
 	}
 
-	// Run make install
+	// Run make install (with sudo if requested)
 	fmt.Println("Running make install...")
 	installArgs := append([]string{"install"}, makeArgs...)
-	installCmd := exec.Command("make", installArgs...)
+	var installCmd *exec.Cmd
+	if opts.UseSudo {
+		// Prepend sudo to the command
+		sudoArgs := append([]string{"make"}, installArgs...)
+		installCmd = exec.Command("sudo", sudoArgs...)
+	} else {
+		installCmd = exec.Command("make", installArgs...)
+	}
 	installCmd.Dir = dir
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr

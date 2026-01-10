@@ -4,6 +4,12 @@ import (
 	"fmt"
 )
 
+// InstallOptions contains options for the Install method.
+type InstallOptions struct {
+	PgConfig string // Path to pg_config
+	UseSudo  bool   // Use sudo for installation
+}
+
 // Builder interface defines operations for building PostgreSQL extensions.
 type Builder interface {
 	// Name returns the builder type name (e.g., "pgrx", "pgxs")
@@ -19,7 +25,7 @@ type Builder interface {
 	GetVersion(dir string) (string, error)
 
 	// Install builds and installs the extension
-	Install(dir string, pgConfig string) error
+	Install(dir string, opts InstallOptions) error
 
 	// NeedsSharedPreload checks if the extension requires shared_preload_libraries
 	NeedsSharedPreload(dir string) bool

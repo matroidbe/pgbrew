@@ -10,6 +10,14 @@ import (
 	"time"
 )
 
+// useSudo controls whether cellar operations use sudo
+var useSudo bool
+
+// SetUseSudo sets whether cellar operations should use sudo
+func SetUseSudo(sudo bool) {
+	useSudo = sudo
+}
+
 // Entry represents an installed extension.
 type Entry struct {
 	Name        string    `json:"name"`
@@ -72,14 +80,24 @@ func save(c *Cellar) error {
 		return err
 	}
 
-	// Ensure directory exists
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
 		return err
 	}
 
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
+	if useSudo {
+		// Use sudo tee to write the file
+		cmd := exec.Command("sudo", "tee", path)
+		cmd.Stdin = strings.NewReader(string(data))
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to write cellar file with sudo: %w", err)
+		}
+		return nil
+	}
+
+	// Ensure directory exists
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 

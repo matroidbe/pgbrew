@@ -289,10 +289,19 @@ func hasMakefileWithInstall(dir string) bool {
 	return strings.Contains(s, "install:") && !strings.Contains(s, "PGXS")
 }
 
+// InstallOptions contains options for the Install function.
+type InstallOptions struct {
+	PgConfig string // Path to pg_config
+	UseSudo  bool   // Use sudo for installation
+}
+
 // Install builds and installs the extension using cargo pgrx install.
-func Install(dir string) error {
+func Install(dir string, opts InstallOptions) error {
 	// Determine pg_config path
-	pgConfig := os.Getenv("PG_CONFIG")
+	pgConfig := opts.PgConfig
+	if pgConfig == "" {
+		pgConfig = os.Getenv("PG_CONFIG")
+	}
 	if pgConfig == "" {
 		pgConfig = "pg_config"
 	}
@@ -301,7 +310,12 @@ func Install(dir string) error {
 	// This allows pgrx projects to have custom build steps (e.g., venv setup)
 	if hasMakefileWithInstall(dir) {
 		fmt.Println("==> Found Makefile with install target, using make...")
-		cmd := exec.Command("make", "install", "PG_CONFIG="+pgConfig)
+		var cmd *exec.Cmd
+		if opts.UseSudo {
+			cmd = exec.Command("sudo", "make", "install", "PG_CONFIG="+pgConfig)
+		} else {
+			cmd = exec.Command("make", "install", "PG_CONFIG="+pgConfig)
+		}
 		cmd.Dir = dir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -327,9 +341,12 @@ func Install(dir string) error {
 	// Build command args
 	args := []string{"pgrx", "install", "--release"}
 
-	// Pass pg_config path if PG_CONFIG is set
-	if pgConfig := os.Getenv("PG_CONFIG"); pgConfig != "" {
-		args = append(args, "--pg-config", pgConfig)
+	// Pass pg_config path
+	args = append(args, "--pg-config", pgConfig)
+
+	// Add sudo flag if requested
+	if opts.UseSudo {
+		args = append(args, "--sudo")
 	}
 
 	// Run cargo pgrx install

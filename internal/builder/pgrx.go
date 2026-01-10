@@ -27,8 +27,11 @@ func (b *PgrxBuilder) GetVersion(dir string) (string, error) {
 	return pgrx.GetVersion(dir)
 }
 
-func (b *PgrxBuilder) Install(dir string, pgConfig string) error {
-	return pgrx.Install(dir)
+func (b *PgrxBuilder) Install(dir string, opts InstallOptions) error {
+	return pgrx.Install(dir, pgrx.InstallOptions{
+		PgConfig: opts.PgConfig,
+		UseSudo:  opts.UseSudo,
+	})
 }
 
 func (b *PgrxBuilder) NeedsSharedPreload(dir string) bool {

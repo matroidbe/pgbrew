@@ -312,8 +312,8 @@ func Install(dir string, opts InstallOptions) error {
 		fmt.Println("==> Found Makefile with install target, using make...")
 		var cmd *exec.Cmd
 		if opts.UseSudo {
-			// Use sudo --preserve-env=PATH to keep user's PATH (for tools like uv)
-			cmd = exec.Command("sudo", "--preserve-env=PATH", "make", "install", "PG_CONFIG="+pgConfig)
+			// Preserve PATH (for uv), HOME, CARGO_HOME, RUSTUP_HOME (for rustup/cargo)
+			cmd = exec.Command("sudo", "--preserve-env=PATH,HOME,CARGO_HOME,RUSTUP_HOME", "make", "install", "PG_CONFIG="+pgConfig)
 		} else {
 			cmd = exec.Command("make", "install", "PG_CONFIG="+pgConfig)
 		}

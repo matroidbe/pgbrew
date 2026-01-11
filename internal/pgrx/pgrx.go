@@ -312,7 +312,8 @@ func Install(dir string, opts InstallOptions) error {
 		fmt.Println("==> Found Makefile with install target, using make...")
 		var cmd *exec.Cmd
 		if opts.UseSudo {
-			cmd = exec.Command("sudo", "make", "install", "PG_CONFIG="+pgConfig)
+			// Use sudo --preserve-env=PATH to keep user's PATH (for tools like uv)
+			cmd = exec.Command("sudo", "--preserve-env=PATH", "make", "install", "PG_CONFIG="+pgConfig)
 		} else {
 			cmd = exec.Command("make", "install", "PG_CONFIG="+pgConfig)
 		}

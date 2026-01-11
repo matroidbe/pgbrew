@@ -136,8 +136,8 @@ func (b *PgxsBuilder) Install(dir string, opts InstallOptions) error {
 	installArgs := append([]string{"install"}, makeArgs...)
 	var installCmd *exec.Cmd
 	if opts.UseSudo {
-		// Prepend sudo to the command
-		sudoArgs := append([]string{"make"}, installArgs...)
+		// Prepend sudo to the command, preserving PATH for tools like uv
+		sudoArgs := append([]string{"--preserve-env=PATH", "make"}, installArgs...)
 		installCmd = exec.Command("sudo", sudoArgs...)
 	} else {
 		installCmd = exec.Command("make", installArgs...)

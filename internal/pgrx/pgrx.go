@@ -308,15 +308,10 @@ func Install(dir string, opts InstallOptions) error {
 
 	// Check if custom Makefile exists with install target
 	// This allows pgrx projects to have custom build steps (e.g., venv setup)
+	// The Makefile is expected to handle sudo internally based on PG_CONFIG path detection
 	if hasMakefileWithInstall(dir) {
 		fmt.Println("==> Found Makefile with install target, using make...")
-		var cmd *exec.Cmd
-		if opts.UseSudo {
-			// Preserve PATH (for uv), HOME, CARGO_HOME, RUSTUP_HOME (for rustup/cargo)
-			cmd = exec.Command("sudo", "--preserve-env=PATH,HOME,CARGO_HOME,RUSTUP_HOME", "make", "install", "PG_CONFIG="+pgConfig)
-		} else {
-			cmd = exec.Command("make", "install", "PG_CONFIG="+pgConfig)
-		}
+		cmd := exec.Command("make", "install", "PG_CONFIG="+pgConfig)
 		cmd.Dir = dir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr

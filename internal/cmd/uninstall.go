@@ -13,6 +13,7 @@ import (
 
 var (
 	uninstallDryRun bool
+	uninstallUseSudo bool
 )
 
 var uninstallCmd = &cobra.Command{
@@ -21,17 +22,25 @@ var uninstallCmd = &cobra.Command{
 	Long: `Uninstall a PostgreSQL extension.
 
 Note: This removes the extension files but does not DROP the extension from databases.
-You should run DROP EXTENSION in each database before uninstalling.`,
+You should run DROP EXTENSION in each database before uninstalling.
+
+Examples:
+  pgx uninstall pg_kafka
+  pgx uninstall --sudo pg_kafka  # Uninstall with sudo for system PostgreSQL`,
 	Args: cobra.ExactArgs(1),
 	RunE: runUninstall,
 }
 
 func init() {
 	uninstallCmd.Flags().BoolVar(&uninstallDryRun, "dry-run", false, "Show what would be removed without deleting")
+	uninstallCmd.Flags().BoolVar(&uninstallUseSudo, "sudo", false, "Use sudo for uninstallation (needed for system PostgreSQL)")
 }
 
 func runUninstall(cmd *cobra.Command, args []string) error {
 	name := args[0]
+
+	// Set sudo mode for cellar operations
+	cellar.SetUseSudo(uninstallUseSudo)
 
 	// Check if extension is tracked by pgx
 	entry, err := cellar.Get(name)
@@ -128,7 +137,15 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	// Actually remove files
 	var removed []string
 	for _, f := range files {
-		if err := os.Remove(f); err == nil {
+		var err error
+		if uninstallUseSudo {
+			// Use sudo to remove file
+			rmCmd := exec.Command("sudo", "rm", "-f", f)
+			err = rmCmd.Run()
+		} else {
+			err = os.Remove(f)
+		}
+		if err == nil {
 			removed = append(removed, f)
 		}
 	}

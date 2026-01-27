@@ -347,7 +347,8 @@ func Install(dir string, opts InstallOptions) error {
 	args = append(args, "--pg-config", pgConfig)
 
 	// Disable default features and specify only the correct pg version feature
-	args = append(args, "--no-default-features", "--features", "pg"+pgMajorVersion)
+	pgFeature := "pg" + pgMajorVersion
+	args = append(args, "--no-default-features", "--features", pgFeature)
 
 	// Add sudo flag if requested
 	if opts.UseSudo {

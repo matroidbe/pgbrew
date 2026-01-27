@@ -334,11 +334,20 @@ func Install(dir string, opts InstallOptions) error {
 		return err
 	}
 
+	// Get PostgreSQL major version
+	pgMajorVersion, err := getPgMajorVersion(pgConfig)
+	if err != nil {
+		return fmt.Errorf("could not determine PostgreSQL version: %w", err)
+	}
+
 	// Build command args
 	args := []string{"pgrx", "install", "--release"}
 
 	// Pass pg_config path
 	args = append(args, "--pg-config", pgConfig)
+
+	// Disable default features and specify only the correct pg version feature
+	args = append(args, "--no-default-features", "--features", "pg"+pgMajorVersion)
 
 	// Add sudo flag if requested
 	if opts.UseSudo {

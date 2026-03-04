@@ -31,6 +31,7 @@ func (b *PgrxBuilder) Install(dir string, opts InstallOptions) error {
 	return pgrx.Install(dir, pgrx.InstallOptions{
 		PgConfig: opts.PgConfig,
 		UseSudo:  opts.UseSudo,
+		Features: opts.Features,
 	})
 }
 

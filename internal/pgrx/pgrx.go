@@ -291,8 +291,9 @@ func hasMakefileWithInstall(dir string) bool {
 
 // InstallOptions contains options for the Install function.
 type InstallOptions struct {
-	PgConfig string // Path to pg_config
-	UseSudo  bool   // Use sudo for installation
+	PgConfig string   // Path to pg_config
+	UseSudo  bool     // Use sudo for installation
+	Features []string // Additional Cargo features to enable
 }
 
 // Install builds and installs the extension using cargo pgrx install.
@@ -348,7 +349,11 @@ func Install(dir string, opts InstallOptions) error {
 
 	// Disable default features and specify only the correct pg version feature
 	pgFeature := "pg" + pgMajorVersion
-	args = append(args, "--no-default-features", "--features", pgFeature)
+	featureList := pgFeature
+	if len(opts.Features) > 0 {
+		featureList += "," + strings.Join(opts.Features, ",")
+	}
+	args = append(args, "--no-default-features", "--features", featureList)
 
 	// Add sudo flag if requested
 	if opts.UseSudo {

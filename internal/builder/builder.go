@@ -6,8 +6,9 @@ import (
 
 // InstallOptions contains options for the Install method.
 type InstallOptions struct {
-	PgConfig string // Path to pg_config
-	UseSudo  bool   // Use sudo for installation
+	PgConfig string   // Path to pg_config
+	UseSudo  bool     // Use sudo for installation
+	Features []string // Additional Cargo features to enable (pgrx only)
 }
 
 // Builder interface defines operations for building PostgreSQL extensions.

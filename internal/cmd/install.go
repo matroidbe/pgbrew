@@ -17,6 +17,7 @@ import (
 )
 
 var useSudo bool
+var features []string
 
 var installCmd = &cobra.Command{
 	Use:   "install <source>",
@@ -34,13 +35,15 @@ Examples:
   pgx install github.com/user/repo/extensions/myext@main
   pgx install ./pg_hello
   pgx install /path/to/extension
-  pgx install --sudo github.com/pgvector/pgvector  # Install with sudo for system PostgreSQL`,
+  pgx install --sudo github.com/pgvector/pgvector  # Install with sudo for system PostgreSQL
+  pgx install --features my_feature ./my_ext       # Enable additional Cargo features (pgrx)`,
 	Args: cobra.ExactArgs(1),
 	RunE: runInstall,
 }
 
 func init() {
 	installCmd.Flags().BoolVar(&useSudo, "sudo", false, "Use sudo for installation (needed for system PostgreSQL)")
+	installCmd.Flags().StringSliceVar(&features, "features", nil, "Additional Cargo features to enable (pgrx only, comma-separated)")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
@@ -121,6 +124,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	opts := builder.InstallOptions{
 		PgConfig: pgConfig,
 		UseSudo:  useSudo,
+		Features: features,
 	}
 	if err := b.Install(extDir, opts); err != nil {
 		return fmt.Errorf("failed to install extension: %w", err)

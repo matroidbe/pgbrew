@@ -296,6 +296,182 @@ type InstallOptions struct {
 	Features []string // Additional Cargo features to enable
 }
 
+// resolveTargetDir finds the Cargo target directory for the project.
+// For workspace members, the target dir is at the workspace root.
+func resolveTargetDir(dir string) string {
+	// Ask cargo for the target directory
+	cmd := exec.Command("cargo", "metadata", "--format-version=1", "--no-deps")
+	cmd.Dir = dir
+	output, err := cmd.Output()
+	if err == nil {
+		// Extract target_directory from JSON (simple string search to avoid json dependency)
+		s := string(output)
+		marker := `"target_directory":"`
+		if idx := strings.Index(s, marker); idx >= 0 {
+			rest := s[idx+len(marker):]
+			if end := strings.Index(rest, `"`); end >= 0 {
+				return rest[:end]
+			}
+		}
+	}
+	// Fallback: target/ in the given directory
+	return filepath.Join(dir, "target")
+}
+
+// findDepsDir returns the path to target/<profile>/deps if it exists.
+func findDepsDir(dir, profile string) string {
+	targetDir := resolveTargetDir(dir)
+	depsDir := filepath.Join(targetDir, profile, "deps")
+	if info, err := os.Stat(depsDir); err == nil && info.IsDir() {
+		return depsDir
+	}
+	return ""
+}
+
+// envWithLDPath returns a copy of the current environment with depsDir
+// prepended to LD_LIBRARY_PATH.
+func envWithLDPath(depsDir string) []string {
+	env := os.Environ()
+	ldPath := depsDir
+	if existing := os.Getenv("LD_LIBRARY_PATH"); existing != "" {
+		ldPath = depsDir + ":" + existing
+	}
+	return updateEnv(env, "LD_LIBRARY_PATH", ldPath)
+}
+
+// updateEnv replaces or appends a KEY=VALUE pair in an environment slice.
+func updateEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	for i, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
+// getPkgLibDir returns the PostgreSQL pkglibdir (where .so files live).
+func getPkgLibDir(pgConfig string) (string, error) {
+	cmd := exec.Command(pgConfig, "--pkglibdir")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// installCompanionLibs finds shared libraries in depsDir that the extension
+// .so depends on and copies them to the PostgreSQL lib directory so they
+// are found at runtime. Returns the number of libraries installed.
+func installCompanionLibs(extName, depsDir, pgLibDir string, useSudo bool) int {
+	extSo := filepath.Join(pgLibDir, extName+".so")
+	if _, err := os.Stat(extSo); err != nil {
+		return 0
+	}
+
+	// Run ldd on the installed extension .so to find its dependencies
+	cmd := exec.Command("ldd", extSo)
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+
+	installed := 0
+
+	// Parse ldd output for "not found" libraries
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "not found") {
+			continue
+		}
+		// Format: "libxgboost.so => not found"
+		parts := strings.Fields(line)
+		if len(parts) == 0 {
+			continue
+		}
+		libName := parts[0]
+
+		// Check if the library exists in our deps directory
+		srcPath := filepath.Join(depsDir, libName)
+		if _, err := os.Stat(srcPath); err != nil {
+			continue
+		}
+
+		dstPath := filepath.Join(pgLibDir, libName)
+		fmt.Printf("  Installing companion lib: %s\n", libName)
+
+		if useSudo {
+			cp := exec.Command("sudo", "cp", srcPath, dstPath)
+			cp.Stdout = os.Stdout
+			cp.Stderr = os.Stderr
+			if err := cp.Run(); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to copy %s: %v\n", libName, err)
+				continue
+			}
+		} else {
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to read %s: %v\n", libName, err)
+				continue
+			}
+			if err := os.WriteFile(dstPath, data, 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to write %s: %v\n", libName, err)
+				continue
+			}
+		}
+		installed++
+	}
+
+	return installed
+}
+
+// ensureLdconfig registers the PostgreSQL lib directory with the system's
+// dynamic linker cache so companion shared libraries are found at runtime.
+func ensureLdconfig(pgLibDir string, useSudo bool) {
+	confPath := "/etc/ld.so.conf.d/postgresql.conf"
+
+	// Check if already configured
+	if data, err := os.ReadFile(confPath); err == nil {
+		if strings.Contains(string(data), pgLibDir) {
+			// Already registered, just refresh the cache
+			runLdconfig(useSudo)
+			return
+		}
+	}
+
+	// Write the config file
+	fmt.Printf("  Registering %s with ldconfig\n", pgLibDir)
+	if useSudo {
+		// Use tee to write via sudo
+		cmd := exec.Command("sudo", "bash", "-c", fmt.Sprintf("echo '%s' > %s", pgLibDir, confPath))
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: failed to create %s: %v\n", confPath, err)
+			return
+		}
+	} else {
+		if err := os.WriteFile(confPath, []byte(pgLibDir+"\n"), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: failed to create %s: %v\n", confPath, err)
+			return
+		}
+	}
+
+	runLdconfig(useSudo)
+}
+
+// runLdconfig refreshes the system's shared library cache.
+func runLdconfig(useSudo bool) {
+	var cmd *exec.Cmd
+	if useSudo {
+		cmd = exec.Command("sudo", "ldconfig")
+	} else {
+		cmd = exec.Command("ldconfig")
+	}
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: ldconfig failed: %v\n", err)
+	}
+}
+
 // Install builds and installs the extension using cargo pgrx install.
 func Install(dir string, opts InstallOptions) error {
 	// Determine pg_config path
@@ -366,8 +542,33 @@ func Install(dir string, opts InstallOptions) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	// Add target deps directories to LD_LIBRARY_PATH so the pgrx_embed binary
+	// can find companion shared libraries (e.g., libxgboost.so) during SQL generation.
+	// We include both release/deps (main build) and debug/deps (embed binary build).
+	var ldPaths []string
+	for _, profile := range []string{"release", "debug"} {
+		if depsDir := findDepsDir(dir, profile); depsDir != "" {
+			ldPaths = append(ldPaths, depsDir)
+		}
+	}
+	if len(ldPaths) > 0 {
+		cmd.Env = envWithLDPath(strings.Join(ldPaths, ":"))
+	}
+
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("cargo pgrx install failed: %w", err)
+	}
+
+	// Copy companion shared libraries to the PG lib directory so they
+	// are found at runtime (PG's pkglibdir is in the extension load path).
+	extName, _ := GetExtensionName(dir)
+	pgLibDir, libErr := getPkgLibDir(pgConfig)
+	releaseDeps := findDepsDir(dir, "release")
+	if extName != "" && libErr == nil && releaseDeps != "" {
+		installed := installCompanionLibs(extName, releaseDeps, pgLibDir, opts.UseSudo)
+		if installed > 0 {
+			ensureLdconfig(pgLibDir, opts.UseSudo)
+		}
 	}
 
 	return nil

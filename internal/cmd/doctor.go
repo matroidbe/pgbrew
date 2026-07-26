@@ -234,8 +234,16 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		fmt.Println("  Native library dependencies will have to be installed manually.")
 	}
 
+	// Per-extension checks. These feed the overall verdict: reporting "all
+	// prerequisites satisfied" while showing a ✗ above it would be worse than
+	// not checking at all.
 	if len(args) == 1 {
-		checkExtensionDeps(args[0])
+		if !checkExtensionDeps(args[0]) {
+			allOk = false
+		}
+		if !reportCargoToolchain(args[0]) {
+			allOk = false
+		}
 	}
 
 	fmt.Println()
@@ -252,19 +260,20 @@ func runDoctor(cmd *cobra.Command, args []string) {
 	}
 }
 
-// checkExtensionDeps reports on the native libraries an extension declares.
-func checkExtensionDeps(dir string) {
+// checkExtensionDeps reports on the native libraries an extension declares and
+// returns whether they are all satisfied.
+func checkExtensionDeps(dir string) bool {
 	fmt.Println()
 	fmt.Printf("System dependencies declared by %s:\n", dir)
 
 	manifest, err := sysdeps.Load(dir)
 	if err != nil {
 		fmt.Printf("✗ %v\n", err)
-		return
+		return false
 	}
 	if manifest.IsEmpty() {
 		fmt.Println("  (none declared)")
-		return
+		return true
 	}
 
 	results := sysdeps.NewProber().ProbeAll(manifest)
@@ -279,7 +288,9 @@ func checkExtensionDeps(dir string) {
 	if !allSatisfied(results) {
 		fmt.Println()
 		fmt.Print(sysdeps.Report(results, sysdeps.Detect()))
+		return false
 	}
+	return true
 }
 
 // firstLine returns the first line of a command's output, trimmed. Version

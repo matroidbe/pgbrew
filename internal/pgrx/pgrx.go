@@ -580,3 +580,71 @@ func Install(dir string, opts InstallOptions) error {
 
 	return nil
 }
+
+// Package builds the extension and stages it into a directory tree, without
+// installing it into the live PostgreSQL.
+//
+// This is what a bottle is made from: `cargo pgrx package` produces a tree
+// mirroring the target's absolute install paths, which can be packaged and
+// shipped to machines that will never run a compiler.
+//
+// Returns the root of the staged tree.
+func Package(dir string, opts InstallOptions) (string, error) {
+	pgConfig := opts.PgConfig
+	if pgConfig == "" {
+		pgConfig = os.Getenv("PG_CONFIG")
+	}
+	if pgConfig == "" {
+		pgConfig = "pg_config"
+	}
+
+	requiredVersion, err := GetPgrxVersion(dir)
+	if err == nil && requiredVersion != "" {
+		if err := EnsurePgrxVersion(requiredVersion); err != nil {
+			return "", err
+		}
+	}
+	if err := EnsurePgrxInit(pgConfig); err != nil {
+		return "", err
+	}
+
+	pgMajorVersion, err := getPgMajorVersion(pgConfig)
+	if err != nil {
+		return "", fmt.Errorf("could not determine PostgreSQL version: %w", err)
+	}
+
+	pgFeature := "pg" + pgMajorVersion
+	featureList := pgFeature
+	if len(opts.Features) > 0 {
+		featureList += "," + strings.Join(opts.Features, ",")
+	}
+
+	args := []string{
+		"pgrx", "package",
+		"--pg-config", pgConfig,
+		"--no-default-features",
+		"--features", featureList,
+	}
+
+	cmd := exec.Command("cargo", args...)
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = sysdeps.ApplyEnv(os.Environ(), opts.Env)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("cargo pgrx package failed: %w", err)
+	}
+
+	extName, err := GetExtensionName(dir)
+	if err != nil {
+		return "", err
+	}
+
+	// cargo-pgrx stages into <target>/release/<extension>-pg<major>.
+	stageRoot := filepath.Join(resolveTargetDir(dir), "release",
+		fmt.Sprintf("%s-pg%s", extName, pgMajorVersion))
+	if info, err := os.Stat(stageRoot); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("expected cargo pgrx to stage into %s, but it is not there", stageRoot)
+	}
+	return stageRoot, nil
+}

@@ -34,6 +34,11 @@ type Builder interface {
 	// Install builds and installs the extension
 	Install(dir string, opts InstallOptions) error
 
+	// Package builds the extension and stages it into a directory tree without
+	// touching the live PostgreSQL installation, returning the tree's root.
+	// This is what a prebuilt bottle is made from.
+	Package(dir string, opts InstallOptions) (string, error)
+
 	// NeedsSharedPreload checks if the extension requires shared_preload_libraries
 	NeedsSharedPreload(dir string) bool
 }

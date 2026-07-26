@@ -57,6 +57,116 @@ pgx install --install-deps github.com/user/repo
 pgx upgrade
 ```
 
+## Bottles (prebuilt artifacts)
+
+Building an extension from source costs a Rust toolchain, cargo-pgrx, whatever
+native libraries it links against, and several minutes of compiling. None of
+that is inherent — the output is a handful of files, and the same files work on
+any machine with a matching PostgreSQL major version, OS and architecture.
+
+A **bottle** is those files plus a manifest. Installing one is a download, a
+checksum check and a copy.
+
+```bash
+# Build a bottle (needs the full toolchain, once, on one machine)
+pgx bottle ./pg_solid -o dist/
+# -> dist/pg_solid-0.2.0-pg16-linux-amd64.tar.gz
+
+# Install it anywhere (needs none of the toolchain)
+pgx install --bottle dist/pg_solid-0.2.0-pg16-linux-amd64.tar.gz
+pgx install --bottle https://example.com/bottles/pg_solid-0.2.0-pg16-linux-amd64.tar.gz
+```
+
+Publish the file wherever you like — a GitHub release, an object store, a file
+share.
+
+### Why the target is in the filename
+
+A PostgreSQL extension is a shared library loaded into a running server
+process, so it must agree with that process on ABI. There is no such thing as
+one artifact that works everywhere; a bottle is inherently keyed by
+`(version, pg_major, os, arch)`. `pgx install --bottle` refuses a bottle that
+does not match the host rather than installing something that would fail at
+load time.
+
+### What is in a bottle
+
+```
+bottle.json                              manifest: name, version, target, checksums
+lib/pg_solid.so                       -> pkglibdir
+share/extension/pg_solid.control      -> sharedir
+share/extension/pg_solid--0.2.0.sql   -> sharedir
+```
+
+Files are stored by role rather than by absolute path, which is what makes a
+bottle relocatable across PostgreSQL installations.
+
+Everything is verified before anything is written: the format version, every
+path (a bottle cannot contain an absolute path, a `..` segment, a symlink, or
+anything outside `lib/` and `share/`), and every file's SHA-256. A bottle
+arrives over a network and is unpacked into privileged directories, so this is
+checked rather than assumed.
+
+## PostgreSQL Configuration
+
+Installing the files is only half of making an extension work. One that
+registers a background worker does nothing unless its library is in
+`shared_preload_libraries`, and most extensions carry GUC settings.
+
+An extension declares what it needs in its manifest:
+
+```toml
+[postgresql]
+shared_preload_libraries = true    # this extension must be preloaded
+restart_required = false           # implied by the above
+
+[postgresql.settings]
+"pg_kafka.port" = "9092"
+"pg_kafka.advertised_host" = "localhost"
+```
+
+`pgx install` reports it; `--configure` writes it:
+
+```
+pg_kafka needs PostgreSQL configuration:
+  shared_preload_libraries += pg_kafka
+  pg_kafka.advertised_host = 'localhost'
+  pg_kafka.port = 9092
+
+  wrote /etc/postgresql/16/main/conf.d/00-pgbrew-shared-preload.conf
+  wrote /etc/postgresql/16/main/conf.d/10-pgbrew-pg_kafka.conf
+  shared_preload_libraries = 'pg_cron, pg_kafka'
+
+  A restart is required for this to take effect:
+    sudo pg_ctlcluster 16 main restart
+```
+
+The declaration also travels **inside a bottle**, so a prebuilt install
+configures the server too — which is what makes "vanilla PostgreSQL to working
+demo" a couple of commands.
+
+### How it writes
+
+**Drop-in files, never postgresql.conf.** Changes go to
+`conf.d/10-pgbrew-<extension>.conf`, so they are attributable per extension and
+removed cleanly on `pgx uninstall`. The only thing ever added to
+`postgresql.conf` is an `include_dir` line, and only if one is not already
+there.
+
+**`shared_preload_libraries` is merged, never overwritten.** It is a single
+cumulative list shared by every preloaded extension, so writing it would
+silently disable whatever was already there. pgbrew reads the existing value
+(from `postgresql.conf` and from its own previous drop-in), appends, and
+de-duplicates. Existing entries keep their position, since load order can
+matter. `pgx uninstall` takes the entry back out — a stale name in that list
+stops the server from starting.
+
+**Nothing is restarted for you.** pgbrew prints the command. Restarting a
+database is an outage, and that is not a package manager's call.
+
+Known limitation: if you remove a library from `postgresql.conf` by hand after
+pgbrew has merged it, it stays in pgbrew's drop-in. Remove it there too.
+
 ## System Dependencies
 
 Some extensions need a native library present *before* they can compile —

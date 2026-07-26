@@ -10,6 +10,7 @@ import (
 	"github.com/matroidbe/pgbrew/internal/builder"
 	"github.com/matroidbe/pgbrew/internal/cellar"
 	"github.com/matroidbe/pgbrew/internal/github"
+	"github.com/matroidbe/pgbrew/internal/sysdeps"
 	"github.com/spf13/cobra"
 
 	// Register builders
@@ -36,20 +37,39 @@ Examples:
   pgx install ./pg_hello
   pgx install /path/to/extension
   pgx install --sudo github.com/pgvector/pgvector  # Install with sudo for system PostgreSQL
-  pgx install --features my_feature ./my_ext       # Enable additional Cargo features (pgrx)`,
-	Args: cobra.ExactArgs(1),
+  pgx install --features my_feature ./my_ext       # Enable additional Cargo features (pgrx)
+  pgx install --bottle pg_solid-0.2.0-pg16-linux-amd64.tar.gz   # Install a prebuilt artifact
+  pgx install --bottle https://example.com/bottles/pg_solid-0.2.0-pg16-linux-amd64.tar.gz`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runInstall,
 }
 
+var bottleSource string
+
 func init() {
+	installCmd.Flags().StringVar(&bottleSource, "bottle", "", "Install from a prebuilt bottle (file path or http(s) URL) instead of building")
 	installCmd.Flags().BoolVar(&useSudo, "sudo", false, "Use sudo for installation (needed for system PostgreSQL)")
 	installCmd.Flags().StringSliceVar(&features, "features", nil, "Additional Cargo features to enable (pgrx only, comma-separated)")
 	installCmd.Flags().BoolVar(&installDeps, "install-deps", false, "Install missing system dependencies with the platform package manager")
 	installCmd.Flags().StringVar(&depsVia, "deps-via", "", depsViaHelp)
 	installCmd.Flags().BoolVar(&skipDepChecks, "skip-dep-check", false, "Skip the system dependency check")
+	installCmd.Flags().BoolVar(&skipToolchainCheck, "skip-toolchain-check", false, "Skip the cargo configuration toolchain check")
+	installCmd.Flags().BoolVar(&configureServer, "configure", false, "Write the PostgreSQL configuration the extension declares (conf.d drop-in)")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
+	// A bottle is a prebuilt artifact: no source, no toolchain, no build. It
+	// carries its own identity, so no source argument is needed.
+	if bottleSource != "" {
+		if len(args) > 0 {
+			return fmt.Errorf("--bottle installs a prebuilt artifact; do not also pass a source")
+		}
+		return installFromBottle(bottleSource)
+	}
+
+	if len(args) != 1 {
+		return fmt.Errorf("accepts 1 arg(s), received %d", len(args))
+	}
 	source := args[0]
 
 	var extDir string
@@ -120,6 +140,15 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get extension name: %w", err)
 	}
 
+	// Verify the tools this project's own cargo configuration asks for. These
+	// are invisible to a generic toolchain check, and a missing one fails the
+	// build within seconds of starting it.
+	if b.Name() == "pgrx" {
+		if err := checkCargoToolchain(extDir); err != nil {
+			return err
+		}
+	}
+
 	// Check the extension's declared native dependencies before building, so a
 	// missing library is reported as such instead of as a compiler or linker
 	// error. Returns the environment that tells the build where they are.
@@ -169,20 +198,20 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\n✓ Successfully installed %s %s\n", extName, version)
 	fmt.Printf("  Run: CREATE EXTENSION %s;\n", extName)
 
-	// Check if extension needs shared_preload_libraries
-	if b.NeedsSharedPreload(extDir) {
-		pgMajor := getPgVersion()
-		pgMajorInt := 0
-		fmt.Sscanf(pgMajor, "%d", &pgMajorInt)
-
-		// Most background worker extensions need shared_preload_libraries on PG < 17
-		if pgMajorInt > 0 && pgMajorInt < 17 {
-			fmt.Println()
-			fmt.Println("⚠ This extension uses background workers.")
-			fmt.Println("  You may need to add it to shared_preload_libraries in postgresql.conf:")
-			fmt.Printf("    shared_preload_libraries = '%s'\n", extName)
-			fmt.Println("  Then restart PostgreSQL.")
+	// Apply (or report) the PostgreSQL configuration the extension declares.
+	// A declaration is authoritative; the source heuristic is only a fallback
+	// for extensions that have not declared anything.
+	manifest, mErr := sysdeps.Load(extDir)
+	declared := mErr == nil && !manifest.Postgres.IsZero()
+	if declared {
+		if err := handlePostgresConfig(planFromManifest(extName, manifest.Postgres)); err != nil {
+			return err
 		}
+	} else {
+		// No declaration: fall back to inferring from the source. Note this is
+		// version-independent — a library registering a background worker in
+		// _PG_init must be preloaded on every PostgreSQL version.
+		preloadWarning(extName, b.NeedsSharedPreload(extDir))
 	}
 
 	return nil

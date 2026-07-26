@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -133,7 +135,7 @@ func (p *Prober) Probe(dep Dependency) Result {
 	}
 
 	// 3. Declared prefixes, then the defaults.
-	prefixes := append(append([]string{}, dep.Prefixes...), p.searchPrefixes()...)
+	prefixes := append(expandPrefixes(dep.Prefixes), p.searchPrefixes()...)
 	for _, prefix := range prefixes {
 		if r, ok := p.inspect(dep, prefix, SourcePrefix); ok {
 			return r
@@ -141,6 +143,80 @@ func (p *Prober) Probe(dep Dependency) Result {
 	}
 
 	return Result{Dependency: dep}
+}
+
+// expandPrefixes resolves glob patterns in a dependency's declared prefixes.
+//
+// Some libraries only ever install under a version-stamped prefix — LLVM is
+// /usr/lib/llvm-20 on one machine and /usr/lib/llvm-18 on the next — so a
+// literal list cannot name them all. A pattern like "/usr/lib/llvm-*" can.
+// Matches are searched newest-first (reverse lexical order), because a library
+// that ships several versions side by side wants the newest one.
+func expandPrefixes(prefixes []string) []string {
+	var out []string
+	for _, prefix := range prefixes {
+		if !strings.ContainsAny(prefix, "*?[") {
+			out = append(out, prefix)
+			continue
+		}
+		matches, err := filepath.Glob(prefix)
+		if err != nil {
+			// A malformed pattern is the manifest author's problem, but it must
+			// not abort the probe — the default prefixes may still find it.
+			continue
+		}
+		dirs := make([]string, 0, len(matches))
+		for _, match := range matches {
+			if isDir(match) {
+				dirs = append(dirs, match)
+			}
+		}
+		sort.Sort(sort.Reverse(natural(dirs)))
+		out = append(out, dirs...)
+	}
+	return out
+}
+
+// natural orders version-stamped paths so that llvm-20 sorts above llvm-9,
+// which plain lexical order gets backwards.
+type natural []string
+
+func (n natural) Len() int      { return len(n) }
+func (n natural) Swap(i, j int) { n[i], n[j] = n[j], n[i] }
+func (n natural) Less(i, j int) bool {
+	a, b := n[i], n[j]
+	for len(a) > 0 && len(b) > 0 {
+		ad, bd := isDigit(a[0]), isDigit(b[0])
+		if ad && bd {
+			ai, an := scanNumber(a)
+			bi, bn := scanNumber(b)
+			if ai != bi {
+				return ai < bi
+			}
+			a, b = a[an:], b[bn:]
+			continue
+		}
+		if a[0] != b[0] {
+			return a[0] < b[0]
+		}
+		a, b = a[1:], b[1:]
+	}
+	return len(a) < len(b)
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+// scanNumber reads the leading run of digits, returning its value and length.
+func scanNumber(s string) (int, int) {
+	i := 0
+	for i < len(s) && isDigit(s[i]) {
+		i++
+	}
+	n, err := strconv.Atoi(s[:i])
+	if err != nil {
+		return 0, i
+	}
+	return n, i
 }
 
 // ProbeAll probes every dependency in a manifest.

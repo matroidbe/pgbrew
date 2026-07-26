@@ -367,3 +367,86 @@ func TestMultiarchTagIsPlausible(t *testing.T) {
 		t.Error("multiarchTag returned empty")
 	}
 }
+
+// LLVM (and other version-stamped installs) only exist under a numbered
+// prefix, so a manifest must be able to say "/usr/lib/llvm-*" and get the
+// newest match first.
+func TestExpandPrefixesGlob(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"llvm-9", "llvm-18", "llvm-20"} {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A file matching the pattern must not be offered as a prefix.
+	if err := os.WriteFile(filepath.Join(root, "llvm-notes.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := expandPrefixes([]string{filepath.Join(root, "llvm-*")})
+	want := []string{
+		filepath.Join(root, "llvm-20"),
+		filepath.Join(root, "llvm-18"),
+		filepath.Join(root, "llvm-9"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("position %d: got %q, want %q (newest first)", i, got[i], want[i])
+		}
+	}
+}
+
+// A literal prefix must survive expansion untouched, glob-free manifests being
+// the overwhelming majority.
+func TestExpandPrefixesPassesLiteralsThrough(t *testing.T) {
+	got := expandPrefixes([]string{"/opt/thing", "/usr/local"})
+	if len(got) != 2 || got[0] != "/opt/thing" || got[1] != "/usr/local" {
+		t.Errorf("literal prefixes were altered: %v", got)
+	}
+}
+
+// A pattern matching nothing yields nothing, and must not stop the probe from
+// falling through to the default prefixes.
+func TestExpandPrefixesNoMatches(t *testing.T) {
+	if got := expandPrefixes([]string{filepath.Join(t.TempDir(), "nothing-*")}); len(got) != 0 {
+		t.Errorf("expected no matches, got %v", got)
+	}
+}
+
+// The glob has to actually reach Probe, not just the helper.
+func TestProbeFindsGlobbedPrefix(t *testing.T) {
+	root := t.TempDir()
+	prefix := filepath.Join(root, "llvm-20")
+	if err := os.MkdirAll(filepath.Join(prefix, "include", "clang-c"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(prefix, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prefix, "include", "clang-c", "Index.h"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prefix, "lib", "libclang.so"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Prober{
+		Prefixes:  []string{},
+		LookupEnv: func(string) (string, bool) { return "", false },
+	}
+	r := p.Probe(Dependency{
+		Name:     "libclang",
+		Header:   "clang-c/Index.h",
+		Library:  "clang",
+		Prefixes: []string{filepath.Join(root, "llvm-*")},
+	})
+	if !r.OK() {
+		t.Fatalf("libclang not found via glob: %s", r.Summary())
+	}
+	if r.Prefix != prefix {
+		t.Errorf("got prefix %q, want %q", r.Prefix, prefix)
+	}
+}

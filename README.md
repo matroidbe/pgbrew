@@ -263,6 +263,11 @@ Probed in order — first hit wins:
 3. Prefixes declared by the extension, then `/usr`, `/usr/local`,
    `/opt/homebrew`, `/opt/local`, `/home/linuxbrew/.linuxbrew`.
 
+A declared prefix may be a glob. Some libraries only ever install under a
+version-stamped directory — LLVM is `/usr/lib/llvm-20` on one machine and
+`/usr/lib/llvm-18` on the next — which no literal list can cover, so
+`prefixes = ["/usr/lib/llvm-*"]` matches them all and searches newest-first.
+
 Whatever is found is exported into the build (as the variables the manifest
 names), so an extension installed in a non-standard prefix is compiled and
 linked against the right copy.
@@ -277,8 +282,11 @@ library = "TKernel"                            # probed as libTKernel.{so,dylib,
 min_version = "7.6"
 brew_formula = "opencascade"
 env_vars = ["OCCT_ROOT", "OCCT_INCLUDE_DIR"]   # user overrides to respect
+prefixes = ["/opt/occt-*"]                     # extra prefixes; globs allowed
 
 # Read the installed version from integer #define macros in a header.
+# `header` defaults to the dependency's `header` above — set it when the version
+# macros live in a different file (OpenSSL keeps them in opensslv.h, not ssl.h).
 [system_dependencies.version]
 major = "OCC_VERSION_MAJOR"
 minor = "OCC_VERSION_MINOR"

@@ -81,8 +81,41 @@ pgx install --install-deps --deps-via brew ./pg_solid
 pgx install --skip-dep-check ./pg_solid
 ```
 
-When a dependency is missing, the build is stopped before it starts and the
-exact command to fix it is printed:
+### In a terminal, pgbrew asks
+
+When a dependency is missing and you are on a terminal, the build stops before
+it starts and you get a menu:
+
+```
+Missing system dependencies:
+
+  ✗ opencascade: found 7.6.3 at /usr, but >= 7.8 is required
+
+How would you like to proceed?
+
+  1) Install with apt   (may not have a new enough version)   sudo apt-get install -y libocct-foundation-dev
+  2) Install with brew  (usually carries newer versions)      brew install opencascade
+  3) Print the install command and exit
+  4) Continue anyway (skip the dependency check)
+  5) Abort
+
+Choice [1]:
+```
+
+Pressing Enter takes the first option. Note the annotations: when a library is
+present but too old, the distro's package usually cannot fix it and Homebrew
+usually can, so the menu says which is which instead of leaving you to work it
+out.
+
+After installing, pgbrew **re-probes** rather than assuming success — the common
+failure is a package that installs happily but is older than the extension
+needs. If it is still unsatisfied you come back to the menu, with the
+alternative right there.
+
+### Everywhere else, it tells you
+
+Outside a terminal — a pipeline, CI, a Dockerfile — prompting would hang the
+build, so pgbrew reports and fails instead:
 
 ```
 Missing system dependencies:
@@ -92,10 +125,17 @@ Missing system dependencies:
 Install with:
   sudo apt-get install -y libocct-foundation-dev libocct-data-exchange-dev
 
+Or let pgbrew do it:
+  pgx install --install-deps <source>
+
 The installed version is too old and your distro may not carry a newer one.
 Homebrew usually does, and works on Linux:
   pgx install --install-deps --deps-via brew <source>
 ```
+
+`--install-deps` never prompts, on a terminal or otherwise: you have already
+answered the question. A closed stdin aborts rather than being read as
+agreement.
 
 Supported package managers: `apt`, `dnf`, `pacman`, `apk`, `zypper`, `brew`.
 A native manager is preferred by default; Homebrew is used on macOS and is

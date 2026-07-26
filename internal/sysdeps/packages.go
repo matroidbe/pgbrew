@@ -178,9 +178,10 @@ func PackagesFor(pm *PackageManager, results []Result) (packages []string, unmap
 	return packages, unmapped
 }
 
-// Report renders an actionable message for unsatisfied dependencies: what is
-// missing, why, and the exact command that would fix it.
-func Report(results []Result, pm *PackageManager) string {
+// MissingReport lists the unsatisfied dependencies and why each one failed,
+// without suggesting a remedy. The interactive flow shows this above a menu of
+// actions; Report adds the non-interactive advice.
+func MissingReport(results []Result) string {
 	var b strings.Builder
 
 	b.WriteString("Missing system dependencies:\n\n")
@@ -196,6 +197,43 @@ func Report(results []Result, pm *PackageManager) string {
 				r.Dependency.Name, r.Version, r.Prefix, r.Dependency.MinVersion)
 		}
 	}
+
+	return b.String()
+}
+
+// CandidateManagers returns the package managers that could plausibly install
+// the unsatisfied dependencies: installed on this host, and with package names
+// declared for at least one of them. The platform's own manager comes first,
+// so it is the natural default; the others matter when it cannot help — most
+// often Homebrew, when the distro's package is too old.
+func CandidateManagers(results []Result) []*PackageManager {
+	var out []*PackageManager
+	seen := map[string]bool{}
+
+	add := func(pm *PackageManager) {
+		if pm == nil || seen[pm.Name] || !pm.Available() {
+			return
+		}
+		if packages, _ := PackagesFor(pm, results); len(packages) == 0 {
+			return
+		}
+		seen[pm.Name] = true
+		out = append(out, pm)
+	}
+
+	add(Detect())
+	for _, pm := range All {
+		add(pm)
+	}
+	return out
+}
+
+// Report renders an actionable message for unsatisfied dependencies: what is
+// missing, why, and the exact command that would fix it. Used when pgbrew
+// cannot ask (a non-interactive session).
+func Report(results []Result, pm *PackageManager) string {
+	var b strings.Builder
+	b.WriteString(MissingReport(results))
 
 	if pm == nil {
 		b.WriteString("\nNo supported package manager was detected on this host.\n")

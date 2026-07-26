@@ -36,6 +36,15 @@ func (b *PgrxBuilder) Install(dir string, opts InstallOptions) error {
 	})
 }
 
+func (b *PgrxBuilder) Package(dir string, opts InstallOptions) (string, error) {
+	return pgrx.Package(dir, pgrx.InstallOptions{
+		PgConfig: opts.PgConfig,
+		UseSudo:  opts.UseSudo,
+		Features: opts.Features,
+		Env:      opts.Env,
+	})
+}
+
 func (b *PgrxBuilder) NeedsSharedPreload(dir string) bool {
 	return pgrx.NeedsSharedPreload(dir)
 }

@@ -36,12 +36,17 @@ Examples:
   pgx install ./pg_hello
   pgx install /path/to/extension
   pgx install --sudo github.com/pgvector/pgvector  # Install with sudo for system PostgreSQL
-  pgx install --features my_feature ./my_ext       # Enable additional Cargo features (pgrx)`,
-	Args: cobra.ExactArgs(1),
+  pgx install --features my_feature ./my_ext       # Enable additional Cargo features (pgrx)
+  pgx install --bottle pg_solid-0.2.0-pg16-linux-amd64.tar.gz   # Install a prebuilt artifact
+  pgx install --bottle https://example.com/bottles/pg_solid-0.2.0-pg16-linux-amd64.tar.gz`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runInstall,
 }
 
+var bottleSource string
+
 func init() {
+	installCmd.Flags().StringVar(&bottleSource, "bottle", "", "Install from a prebuilt bottle (file path or http(s) URL) instead of building")
 	installCmd.Flags().BoolVar(&useSudo, "sudo", false, "Use sudo for installation (needed for system PostgreSQL)")
 	installCmd.Flags().StringSliceVar(&features, "features", nil, "Additional Cargo features to enable (pgrx only, comma-separated)")
 	installCmd.Flags().BoolVar(&installDeps, "install-deps", false, "Install missing system dependencies with the platform package manager")
@@ -51,6 +56,18 @@ func init() {
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
+	// A bottle is a prebuilt artifact: no source, no toolchain, no build. It
+	// carries its own identity, so no source argument is needed.
+	if bottleSource != "" {
+		if len(args) > 0 {
+			return fmt.Errorf("--bottle installs a prebuilt artifact; do not also pass a source")
+		}
+		return installFromBottle(bottleSource)
+	}
+
+	if len(args) != 1 {
+		return fmt.Errorf("accepts 1 arg(s), received %d", len(args))
+	}
 	source := args[0]
 
 	var extDir string

@@ -57,6 +57,56 @@ pgx install --install-deps github.com/user/repo
 pgx upgrade
 ```
 
+## Bottles (prebuilt artifacts)
+
+Building an extension from source costs a Rust toolchain, cargo-pgrx, whatever
+native libraries it links against, and several minutes of compiling. None of
+that is inherent — the output is a handful of files, and the same files work on
+any machine with a matching PostgreSQL major version, OS and architecture.
+
+A **bottle** is those files plus a manifest. Installing one is a download, a
+checksum check and a copy.
+
+```bash
+# Build a bottle (needs the full toolchain, once, on one machine)
+pgx bottle ./pg_solid -o dist/
+# -> dist/pg_solid-0.2.0-pg16-linux-amd64.tar.gz
+
+# Install it anywhere (needs none of the toolchain)
+pgx install --bottle dist/pg_solid-0.2.0-pg16-linux-amd64.tar.gz
+pgx install --bottle https://example.com/bottles/pg_solid-0.2.0-pg16-linux-amd64.tar.gz
+```
+
+Publish the file wherever you like — a GitHub release, an object store, a file
+share.
+
+### Why the target is in the filename
+
+A PostgreSQL extension is a shared library loaded into a running server
+process, so it must agree with that process on ABI. There is no such thing as
+one artifact that works everywhere; a bottle is inherently keyed by
+`(version, pg_major, os, arch)`. `pgx install --bottle` refuses a bottle that
+does not match the host rather than installing something that would fail at
+load time.
+
+### What is in a bottle
+
+```
+bottle.json                              manifest: name, version, target, checksums
+lib/pg_solid.so                       -> pkglibdir
+share/extension/pg_solid.control      -> sharedir
+share/extension/pg_solid--0.2.0.sql   -> sharedir
+```
+
+Files are stored by role rather than by absolute path, which is what makes a
+bottle relocatable across PostgreSQL installations.
+
+Everything is verified before anything is written: the format version, every
+path (a bottle cannot contain an absolute path, a `..` segment, a symlink, or
+anything outside `lib/` and `share/`), and every file's SHA-256. A bottle
+arrives over a network and is unpacked into privileged directories, so this is
+checked rather than assumed.
+
 ## System Dependencies
 
 Some extensions need a native library present *before* they can compile —

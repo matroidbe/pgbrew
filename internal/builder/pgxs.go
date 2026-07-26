@@ -190,3 +190,46 @@ func (b *PgxsBuilder) NeedsSharedPreload(dir string) bool {
 	content := strings.ToLower(string(data))
 	return strings.Contains(content, "bgworker") || strings.Contains(content, "background_worker")
 }
+
+// Package builds the extension and stages it under a temporary DESTDIR,
+// leaving the live PostgreSQL installation untouched. Returns the tree's root.
+func (b *PgxsBuilder) Package(dir string, opts InstallOptions) (string, error) {
+	pgConfig := opts.PgConfig
+	if pgConfig == "" {
+		pgConfig = os.Getenv("PG_CONFIG")
+	}
+	if pgConfig == "" {
+		pgConfig = "pg_config"
+	}
+
+	stageRoot, err := os.MkdirTemp("", "pgbrew-stage-*")
+	if err != nil {
+		return "", err
+	}
+
+	makeArgs := []string{"PG_CONFIG=" + pgConfig, "CC=gcc"}
+	buildEnv := sysdeps.ApplyEnv(os.Environ(), opts.Env)
+
+	makeCmd := exec.Command("make", makeArgs...)
+	makeCmd.Dir = dir
+	makeCmd.Stdout = os.Stdout
+	makeCmd.Stderr = os.Stderr
+	makeCmd.Env = buildEnv
+	if err := makeCmd.Run(); err != nil {
+		return "", fmt.Errorf("make failed: %w", err)
+	}
+
+	// DESTDIR is the standard way to stage an install without root, and
+	// without disturbing what is already installed.
+	installArgs := append([]string{"install", "DESTDIR=" + stageRoot}, makeArgs...)
+	installCmd := exec.Command("make", installArgs...)
+	installCmd.Dir = dir
+	installCmd.Stdout = os.Stdout
+	installCmd.Stderr = os.Stderr
+	installCmd.Env = buildEnv
+	if err := installCmd.Run(); err != nil {
+		return "", fmt.Errorf("staged make install failed: %w", err)
+	}
+
+	return stageRoot, nil
+}

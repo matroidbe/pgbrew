@@ -3,6 +3,7 @@ package pgrx
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -83,5 +84,104 @@ pub extern "C-unwind" fn _PG_init() {
 
 	if !NeedsSharedPreload(dir) {
 		t.Error("a BackgroundWorkerBuilder in _PG_init requires shared_preload_libraries")
+	}
+}
+
+// A package that inherits its version from the workspace has no literal version
+// of its own, so scanning the file finds the first dependency's instead. That
+// number would then name the cellar entry and the bottle filename.
+func TestGetVersionResolvesWorkspaceInheritance(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "Cargo.toml", `
+[workspace]
+members = ["eidos-pg"]
+
+[workspace.package]
+version = "1.1.0"
+`)
+	crate := filepath.Join(root, "eidos-pg")
+	if err := os.Mkdir(crate, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, crate, "Cargo.toml", `
+[package]
+name = "eidos-pg"
+version.workspace = true
+
+[dependencies]
+socket2 = { version = "0.5", features = ["all"] }
+pgrx = "0.16"
+`)
+
+	got, err := GetVersion(crate)
+	if err != nil {
+		t.Fatalf("GetVersion: %v", err)
+	}
+	if got != "1.1.0" {
+		t.Errorf("got %q, want %q (0.5 means socket2's version leaked through)", got, "1.1.0")
+	}
+}
+
+// A literal version in [package] is the common case and must win outright.
+func TestGetVersionPrefersLiteralPackageVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Cargo.toml", `
+[package]
+name = "pg_solid"
+version = "0.2.0"
+
+[dependencies]
+serde = { version = "9.9.9" }
+`)
+
+	got, err := GetVersion(dir)
+	if err != nil {
+		t.Fatalf("GetVersion: %v", err)
+	}
+	if got != "0.2.0" {
+		t.Errorf("got %q, want %q", got, "0.2.0")
+	}
+}
+
+// Inheritance with no workspace above it is a broken manifest; say so rather
+// than reporting a dependency's version as the extension's.
+func TestGetVersionOrphanedInheritance(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Cargo.toml", `
+[package]
+name = "lonely"
+version.workspace = true
+
+[dependencies]
+socket2 = { version = "0.5" }
+`)
+
+	got, err := GetVersion(dir)
+	if err == nil {
+		t.Fatalf("expected an error, got version %q", got)
+	}
+	if !strings.Contains(err.Error(), "workspace") {
+		t.Errorf("error should name the cause, got: %v", err)
+	}
+}
+
+// The name fallback must read [package], not the first `name =` in the file.
+func TestGetExtensionNameIgnoresNonPackageNames(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Cargo.toml", `
+[[bin]]
+name = "helper-binary"
+
+[package]
+name = "real-ext"
+version = "1.0.0"
+`)
+
+	got, err := GetExtensionName(dir)
+	if err != nil {
+		t.Fatalf("GetExtensionName: %v", err)
+	}
+	if got != "real_ext" {
+		t.Errorf("got %q, want %q", got, "real_ext")
 	}
 }

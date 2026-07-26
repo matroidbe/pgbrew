@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/matroidbe/pgbrew/internal/sysdeps"
 )
 
@@ -86,40 +87,103 @@ func GetExtensionName(dir string) (string, error) {
 		return strings.TrimSuffix(base, ".control"), nil
 	}
 
-	cargoPath := filepath.Join(dir, "Cargo.toml")
-	data, err := os.ReadFile(cargoPath)
+	manifest, err := readCargo(dir)
 	if err != nil {
 		return "", err
 	}
-
-	// Simple regex to find name = "..."
-	re := regexp.MustCompile(`name\s*=\s*"([^"]+)"`)
-	matches := re.FindSubmatch(data)
-	if len(matches) < 2 {
+	if manifest.Package.Name == "" {
 		return "", fmt.Errorf("could not find package name in Cargo.toml")
 	}
 
 	// Match Cargo's own lib-name normalisation, so the fallback names the file
 	// that will actually be installed.
-	return strings.ReplaceAll(string(matches[1]), "-", "_"), nil
+	return strings.ReplaceAll(manifest.Package.Name, "-", "_"), nil
 }
 
-// GetVersion extracts the version from Cargo.toml.
+// GetVersion extracts the extension version from Cargo.toml.
+//
+// This reads the [package] table specifically. Scanning the whole file for the
+// first `version = "..."` finds a dependency's version instead whenever the
+// package inherits its own from the workspace — eidos-pg declares
+// `version.workspace = true` and its first literal version belongs to socket2,
+// so a scan reports the extension as 0.5. That number then names the cellar
+// entry and the bottle filename, both of which are meant to identify what was
+// actually built.
 func GetVersion(dir string) (string, error) {
-	cargoPath := filepath.Join(dir, "Cargo.toml")
-	data, err := os.ReadFile(cargoPath)
+	manifest, err := readCargo(dir)
 	if err != nil {
 		return "", err
 	}
 
-	// Simple regex to find version = "..."
-	re := regexp.MustCompile(`version\s*=\s*"([^"]+)"`)
-	matches := re.FindSubmatch(data)
-	if len(matches) < 2 {
-		return "", fmt.Errorf("could not find version in Cargo.toml")
+	switch v := manifest.Package.Version.(type) {
+	case string:
+		if v != "" {
+			return v, nil
+		}
+	case map[string]interface{}:
+		// `version.workspace = true` — the real number lives in the workspace
+		// root, which is some ancestor directory.
+		if inherit, _ := v["workspace"].(bool); inherit {
+			if version, ok := workspaceVersion(dir); ok {
+				return version, nil
+			}
+			return "", fmt.Errorf(
+				"Cargo.toml inherits its version from the workspace, but no ancestor declares [workspace.package] version")
+		}
 	}
 
-	return string(matches[1]), nil
+	return "", fmt.Errorf("could not find version in Cargo.toml")
+}
+
+// cargoPackageManifest is the slice of Cargo.toml this package reads. Version is
+// `interface{}` because Cargo accepts either a string or the inheritance table
+// `{ workspace = true }`.
+type cargoPackageManifest struct {
+	Package struct {
+		Name    string      `toml:"name"`
+		Version interface{} `toml:"version"`
+	} `toml:"package"`
+	Workspace *struct {
+		Package struct {
+			Version string `toml:"version"`
+		} `toml:"package"`
+	} `toml:"workspace"`
+}
+
+func readCargo(dir string) (*cargoPackageManifest, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "Cargo.toml"))
+	if err != nil {
+		return nil, err
+	}
+	var m cargoPackageManifest
+	if _, err := toml.Decode(string(data), &m); err != nil {
+		return nil, fmt.Errorf("parsing Cargo.toml: %w", err)
+	}
+	return &m, nil
+}
+
+// workspaceVersion walks up from dir looking for the workspace root that
+// declares [workspace.package] version.
+func workspaceVersion(dir string) (string, bool) {
+	current, err := filepath.Abs(dir)
+	if err != nil {
+		return "", false
+	}
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+		current = parent
+
+		m, err := readCargo(current)
+		if err != nil {
+			continue
+		}
+		if m.Workspace != nil && m.Workspace.Package.Version != "" {
+			return m.Workspace.Package.Version, true
+		}
+	}
 }
 
 // GetPgrxVersion extracts the pgrx version from Cargo.toml.

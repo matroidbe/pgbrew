@@ -157,3 +157,56 @@ func TestVersionFromHeader(t *testing.T) {
 		t.Error("expected an error for a missing header")
 	}
 }
+
+// C allows whitespace between the `#` and the `define`, and real headers use
+// it: OpenSSL's opensslv.h indents every directive that way. Matching only the
+// unspaced form left the version unreadable and any min_version unenforced.
+func TestParseDefineAcceptsSpaceAfterHash(t *testing.T) {
+	header := `
+/* OpenSSL-style, with the directives indented under a conditional. */
+#ifndef OPENSSL_VERSION_H
+# define OPENSSL_VERSION_MAJOR  3
+# define OPENSSL_VERSION_MINOR  0
+#  define OPENSSL_VERSION_PATCH	13
+#endif
+`
+	for _, tc := range []struct {
+		macro string
+		want  int
+	}{
+		{"OPENSSL_VERSION_MAJOR", 3},
+		{"OPENSSL_VERSION_MINOR", 0},
+		{"OPENSSL_VERSION_PATCH", 13},
+	} {
+		got, ok := parseDefine(header, tc.macro)
+		if !ok {
+			t.Errorf("%s: not found", tc.macro)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %d, want %d", tc.macro, got, tc.want)
+		}
+	}
+}
+
+// Relaxing the prefix match must not let `#defined` through as `#define`.
+func TestParseDefineRejectsLookalikeDirectives(t *testing.T) {
+	for _, header := range []string{
+		"#defined FOO 3\n",
+		"# defineFOO 3\n",
+		"#ifdef FOO\n",
+		"FOO 3\n",
+	} {
+		if _, ok := parseDefine(header, "FOO"); ok {
+			t.Errorf("%q should not parse as a #define of FOO", header)
+		}
+	}
+}
+
+// The unspaced form every other header uses must keep working.
+func TestParseDefineStillAcceptsUnspacedForm(t *testing.T) {
+	got, ok := parseDefine("#define OCC_VERSION_MAJOR 7\n", "OCC_VERSION_MAJOR")
+	if !ok || got != 7 {
+		t.Errorf("got (%d, %v), want (7, true)", got, ok)
+	}
+}

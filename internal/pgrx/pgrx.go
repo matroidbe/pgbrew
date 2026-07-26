@@ -71,8 +71,21 @@ func IsProject(dir string) bool {
 	return strings.Contains(content, "pgrx")
 }
 
-// GetExtensionName extracts the package name from Cargo.toml.
+// GetExtensionName returns the name PostgreSQL knows the extension by.
+//
+// The .control file is authoritative: it is what `CREATE EXTENSION` names, what
+// cargo-pgrx installs the files as, and what the library is called. The Cargo
+// package name is only a fallback, and it is not the same thing — a crate named
+// `eidos-pg` installs as `eidos_pg`, because Cargo turns hyphens into
+// underscores for the library. Trusting the package name would name the cellar
+// entry, the bottle contents and the preloaded library after something that
+// does not exist on disk.
 func GetExtensionName(dir string) (string, error) {
+	if controlFiles, err := filepath.Glob(filepath.Join(dir, "*.control")); err == nil && len(controlFiles) > 0 {
+		base := filepath.Base(controlFiles[0])
+		return strings.TrimSuffix(base, ".control"), nil
+	}
+
 	cargoPath := filepath.Join(dir, "Cargo.toml")
 	data, err := os.ReadFile(cargoPath)
 	if err != nil {
@@ -86,7 +99,9 @@ func GetExtensionName(dir string) (string, error) {
 		return "", fmt.Errorf("could not find package name in Cargo.toml")
 	}
 
-	return string(matches[1]), nil
+	// Match Cargo's own lib-name normalisation, so the fallback names the file
+	// that will actually be installed.
+	return strings.ReplaceAll(string(matches[1]), "-", "_"), nil
 }
 
 // GetVersion extracts the version from Cargo.toml.

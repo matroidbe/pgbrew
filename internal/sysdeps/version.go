@@ -118,13 +118,28 @@ func versionFromHeader(path string, spec VersionSpec) (Version, error) {
 //
 // Comment lines are skipped, which matters because headers routinely document
 // their own version macros in comments directly above the real definition.
+//
+// Whitespace is allowed between the `#` and the `define`: C permits it, and
+// headers that indent nested directives use it routinely — OpenSSL's
+// opensslv.h writes `# define OPENSSL_VERSION_MAJOR 3`. Matching only the
+// unspaced form makes the version silently unreadable there, which in turn
+// makes any declared min_version silently unenforced.
 func parseDefine(text, name string) (int, bool) {
 	for _, line := range strings.Split(text, "\n") {
 		rest := strings.TrimSpace(line)
-		if !strings.HasPrefix(rest, "#define") {
+		if !strings.HasPrefix(rest, "#") {
 			continue
 		}
-		rest = strings.TrimSpace(strings.TrimPrefix(rest, "#define"))
+		rest = strings.TrimLeft(rest[1:], " \t")
+		if !strings.HasPrefix(rest, "define") {
+			continue
+		}
+		rest = strings.TrimPrefix(rest, "define")
+		// Require whitespace after the keyword so `#defined` cannot match.
+		if rest == "" || !isSpace(rest[0]) {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
 		if !strings.HasPrefix(rest, name) {
 			continue
 		}

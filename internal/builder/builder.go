@@ -9,6 +9,12 @@ type InstallOptions struct {
 	PgConfig string   // Path to pg_config
 	UseSudo  bool     // Use sudo for installation
 	Features []string // Additional Cargo features to enable (pgrx only)
+
+	// Env carries extra KEY=VALUE pairs for the build, holding the locations of
+	// system dependencies pgbrew discovered (see internal/sysdeps). This is how
+	// an extension's build script finds a library installed in a Homebrew or
+	// otherwise non-standard prefix.
+	Env []string
 }
 
 // Builder interface defines operations for building PostgreSQL extensions.

@@ -32,6 +32,7 @@ func (b *PgrxBuilder) Install(dir string, opts InstallOptions) error {
 		PgConfig: opts.PgConfig,
 		UseSudo:  opts.UseSudo,
 		Features: opts.Features,
+		Env:      opts.Env,
 	})
 }
 

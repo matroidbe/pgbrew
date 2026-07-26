@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/matroidbe/pgbrew/internal/sysdeps"
 )
 
 // PgxsBuilder implements the Builder interface for C extensions using PGXS Makefiles.
@@ -115,10 +117,15 @@ func (b *PgxsBuilder) Install(dir string, opts InstallOptions) error {
 		"CC=gcc",
 	}
 
+	// Environment for the build, including the locations of any system
+	// dependencies pgbrew discovered.
+	buildEnv := sysdeps.ApplyEnv(os.Environ(), opts.Env)
+
 	// Run make clean (ignore errors - may not have been built before)
 	cleanArgs := append([]string{"clean"}, makeArgs...)
 	cleanCmd := exec.Command("make", cleanArgs...)
 	cleanCmd.Dir = dir
+	cleanCmd.Env = buildEnv
 	cleanCmd.Run() // Ignore errors
 
 	// Run make
@@ -127,6 +134,7 @@ func (b *PgxsBuilder) Install(dir string, opts InstallOptions) error {
 	makeCmd.Dir = dir
 	makeCmd.Stdout = os.Stdout
 	makeCmd.Stderr = os.Stderr
+	makeCmd.Env = buildEnv
 	if err := makeCmd.Run(); err != nil {
 		return fmt.Errorf("make failed: %w", err)
 	}
@@ -136,13 +144,18 @@ func (b *PgxsBuilder) Install(dir string, opts InstallOptions) error {
 	installArgs := append([]string{"install"}, makeArgs...)
 	var installCmd *exec.Cmd
 	if opts.UseSudo {
-		// Preserve PATH (for uv), HOME, CARGO_HOME, RUSTUP_HOME (for rustup/cargo)
-		sudoArgs := append([]string{"--preserve-env=PATH,HOME,CARGO_HOME,RUSTUP_HOME", "make"}, installArgs...)
+		// Preserve PATH (for uv), HOME, CARGO_HOME, RUSTUP_HOME (for rustup/cargo).
+		// sudo strips the environment by default, so any system-dependency
+		// variables have to be named explicitly or they will not survive into
+		// the build that `make install` may still run.
+		preserve := append([]string{"PATH", "HOME", "CARGO_HOME", "RUSTUP_HOME"}, sysdeps.EnvKeys(opts.Env)...)
+		sudoArgs := append([]string{"--preserve-env=" + strings.Join(preserve, ","), "make"}, installArgs...)
 		installCmd = exec.Command("sudo", sudoArgs...)
 	} else {
 		installCmd = exec.Command("make", installArgs...)
 	}
 	installCmd.Dir = dir
+	installCmd.Env = buildEnv
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
 	if err := installCmd.Run(); err != nil {

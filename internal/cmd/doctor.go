@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/matroidbe/pgbrew/internal/sysdeps"
 )
 
 var fixFlag bool
@@ -21,13 +23,19 @@ func getPgConfigPath() string {
 }
 
 var doctorCmd = &cobra.Command{
-	Use:   "doctor",
+	Use:   "doctor [extension-path]",
 	Short: "Check system prerequisites",
 	Long: `Verifies that all required tools are installed for building and installing PostgreSQL extensions.
 
 Use --fix to automatically install missing user-space tools (Rust, cargo-pgrx, pgrx init).
-System packages (git, make, gcc) require manual installation with sudo.`,
-	Run: runDoctor,
+System packages (git, make, gcc) require manual installation with sudo.
+
+Given an extension path, also checks the native libraries that extension declares
+in its pgbrew manifest, and reports how to install any that are missing:
+
+  pgx doctor ./pg_solid`,
+	Args: cobra.MaximumNArgs(1),
+	Run:  runDoctor,
 }
 
 func init() {
@@ -198,6 +206,38 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		fmt.Printf("  Install: %s\n", getInstallHint("build-essential"))
 	}
 
+	// A C++ compiler is not needed for PGXS itself, but extensions that wrap a
+	// C++ library (pg_solid's OpenCASCADE wrapper, for one) compile C++ from
+	// their build script. Without this check such a build fails after doctor
+	// has already reported everything as fine.
+	cxxFound := false
+	for _, name := range []string{"g++", "clang++", "c++"} {
+		if checkCommand(name, "--version") {
+			fmt.Printf("✓ C++ compiler: %s\n", firstLine(getCommandOutput(name, "--version")))
+			cxxFound = true
+			break
+		}
+	}
+	if !cxxFound {
+		fmt.Println("✗ C++ compiler: not installed")
+		fmt.Printf("  Install: %s\n", getInstallHint("g++"))
+		fmt.Println("  (needed only by extensions that wrap a C++ library)")
+	}
+
+	fmt.Println()
+	fmt.Println("System dependency support:")
+	if pm := sysdeps.Detect(); pm != nil {
+		fmt.Printf("✓ Package manager: %s\n", pm.Name)
+	} else {
+		fmt.Println("✗ No supported package manager detected")
+		fmt.Printf("  Known: %s\n", strings.Join(sysdeps.Names(), ", "))
+		fmt.Println("  Native library dependencies will have to be installed manually.")
+	}
+
+	if len(args) == 1 {
+		checkExtensionDeps(args[0])
+	}
+
 	fmt.Println()
 	if fixFlag && fixedCount > 0 {
 		fmt.Printf("Fixed %d issue(s).\n", fixedCount)
@@ -210,6 +250,45 @@ func runDoctor(cmd *cobra.Command, args []string) {
 			fmt.Println("Run 'pgx doctor --fix' to auto-install Rust toolchain components.")
 		}
 	}
+}
+
+// checkExtensionDeps reports on the native libraries an extension declares.
+func checkExtensionDeps(dir string) {
+	fmt.Println()
+	fmt.Printf("System dependencies declared by %s:\n", dir)
+
+	manifest, err := sysdeps.Load(dir)
+	if err != nil {
+		fmt.Printf("✗ %v\n", err)
+		return
+	}
+	if manifest.IsEmpty() {
+		fmt.Println("  (none declared)")
+		return
+	}
+
+	results := sysdeps.NewProber().ProbeAll(manifest)
+	for _, r := range results {
+		mark := "✓"
+		if !r.OK() {
+			mark = "✗"
+		}
+		fmt.Printf("%s %s\n", mark, r.Summary())
+	}
+
+	if !allSatisfied(results) {
+		fmt.Println()
+		fmt.Print(sysdeps.Report(results, sysdeps.Detect()))
+	}
+}
+
+// firstLine returns the first line of a command's output, trimmed. Version
+// output is routinely multi-line and only the first line identifies the tool.
+func firstLine(s string) string {
+	if idx := strings.Index(s, "\n"); idx > 0 {
+		s = s[:idx]
+	}
+	return strings.TrimSpace(s)
 }
 
 func checkCommand(name string, args ...string) bool {

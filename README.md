@@ -50,9 +50,102 @@ pgx info pg_graphql
 pgx uninstall --dry-run pg_graphql
 pgx uninstall pg_graphql
 
+# Install an extension's native library dependencies too
+pgx install --install-deps github.com/user/repo
+
 # Upgrade pgx itself
 pgx upgrade
 ```
+
+## System Dependencies
+
+Some extensions need a native library present *before* they can compile —
+pg_solid needs OpenCASCADE, for instance. Without knowing about these, the
+failure mode is a wall of linker errors.
+
+An extension declares what it needs in a `pgbrew.toml` (or a
+`[package.metadata.pgbrew]` table in `Cargo.toml`). pgbrew then probes for each
+one before building:
+
+```bash
+# Report what an extension needs and whether it is satisfied
+pgx doctor ./pg_solid
+
+# Install missing dependencies with the platform package manager
+pgx install --install-deps ./pg_solid
+
+# Force a specific package manager
+pgx install --install-deps --deps-via brew ./pg_solid
+
+# Skip the check entirely
+pgx install --skip-dep-check ./pg_solid
+```
+
+When a dependency is missing, the build is stopped before it starts and the
+exact command to fix it is printed:
+
+```
+Missing system dependencies:
+
+  ✗ opencascade: found 7.6.3 at /usr, but >= 7.8 is required
+
+Install with:
+  sudo apt-get install -y libocct-foundation-dev libocct-data-exchange-dev
+
+The installed version is too old and your distro may not carry a newer one.
+Homebrew usually does, and works on Linux:
+  pgx install --install-deps --deps-via brew <source>
+```
+
+Supported package managers: `apt`, `dnf`, `pacman`, `apk`, `zypper`, `brew`.
+A native manager is preferred by default; Homebrew is used on macOS and is
+available on Linux too, which matters when a distro's package is older than the
+extension requires.
+
+### Where a dependency is found
+
+Probed in order — first hit wins:
+
+1. Environment variables the extension declares (e.g. `OCCT_ROOT`). If you have
+   set one, pgbrew defers to it and does not second-guess your choice.
+2. `brew --prefix <formula>`, since a Homebrew copy is usually newer than the
+   distro's.
+3. Prefixes declared by the extension, then `/usr`, `/usr/local`,
+   `/opt/homebrew`, `/opt/local`, `/home/linuxbrew/.linuxbrew`.
+
+Whatever is found is exported into the build (as the variables the manifest
+names), so an extension installed in a non-standard prefix is compiled and
+linked against the right copy.
+
+### Manifest format
+
+```toml
+[[system_dependencies]]
+name = "opencascade"
+header = "opencascade/Standard_Version.hxx"   # probed under <prefix>/include
+library = "TKernel"                            # probed as libTKernel.{so,dylib,a}
+min_version = "7.6"
+brew_formula = "opencascade"
+env_vars = ["OCCT_ROOT", "OCCT_INCLUDE_DIR"]   # user overrides to respect
+
+# Read the installed version from integer #define macros in a header.
+[system_dependencies.version]
+major = "OCC_VERSION_MAJOR"
+minor = "OCC_VERSION_MINOR"
+patch = "OCC_VERSION_MAINTENANCE"
+
+# Exported into the build; {prefix}, {include} and {lib} are substituted.
+[system_dependencies.env]
+OCCT_ROOT = "{prefix}"
+
+[system_dependencies.packages]
+apt = ["libocct-foundation-dev", "libocct-data-exchange-dev"]
+dnf = ["opencascade-devel"]
+brew = ["opencascade"]
+```
+
+Extensions that declare no manifest are unaffected — the check is a no-op for
+them.
 
 ## Installing to System PostgreSQL
 

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/matroidbe/pgbrew/internal/sysdeps"
 )
 
 // NeedsSharedPreload checks if the extension uses background workers
@@ -294,6 +296,7 @@ type InstallOptions struct {
 	PgConfig string   // Path to pg_config
 	UseSudo  bool     // Use sudo for installation
 	Features []string // Additional Cargo features to enable
+	Env      []string // Extra KEY=VALUE pairs for the build (system dependency locations)
 }
 
 // resolveTargetDir finds the Cargo target directory for the project.
@@ -328,10 +331,8 @@ func findDepsDir(dir, profile string) string {
 	return ""
 }
 
-// envWithLDPath returns a copy of the current environment with depsDir
-// prepended to LD_LIBRARY_PATH.
-func envWithLDPath(depsDir string) []string {
-	env := os.Environ()
+// withLDPath returns env with depsDir prepended to LD_LIBRARY_PATH.
+func withLDPath(env []string, depsDir string) []string {
 	ldPath := depsDir
 	if existing := os.Getenv("LD_LIBRARY_PATH"); existing != "" {
 		ldPath = depsDir + ":" + existing
@@ -492,6 +493,7 @@ func Install(dir string, opts InstallOptions) error {
 		cmd.Dir = dir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
+		cmd.Env = sysdeps.ApplyEnv(os.Environ(), opts.Env)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("make install failed: %w", err)
 		}
@@ -542,6 +544,10 @@ func Install(dir string, opts InstallOptions) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	// Start from the current environment plus any system-dependency locations
+	// pgbrew discovered, so the extension's build script can find them.
+	env := sysdeps.ApplyEnv(os.Environ(), opts.Env)
+
 	// Add target deps directories to LD_LIBRARY_PATH so the pgrx_embed binary
 	// can find companion shared libraries (e.g., libxgboost.so) during SQL generation.
 	// We include both release/deps (main build) and debug/deps (embed binary build).
@@ -552,8 +558,9 @@ func Install(dir string, opts InstallOptions) error {
 		}
 	}
 	if len(ldPaths) > 0 {
-		cmd.Env = envWithLDPath(strings.Join(ldPaths, ":"))
+		env = withLDPath(env, strings.Join(ldPaths, ":"))
 	}
+	cmd.Env = env
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("cargo pgrx install failed: %w", err)

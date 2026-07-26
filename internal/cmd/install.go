@@ -44,6 +44,9 @@ Examples:
 func init() {
 	installCmd.Flags().BoolVar(&useSudo, "sudo", false, "Use sudo for installation (needed for system PostgreSQL)")
 	installCmd.Flags().StringSliceVar(&features, "features", nil, "Additional Cargo features to enable (pgrx only, comma-separated)")
+	installCmd.Flags().BoolVar(&installDeps, "install-deps", false, "Install missing system dependencies with the platform package manager")
+	installCmd.Flags().StringVar(&depsVia, "deps-via", "", depsViaHelp)
+	installCmd.Flags().BoolVar(&skipDepChecks, "skip-dep-check", false, "Skip the system dependency check")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
@@ -117,6 +120,14 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get extension name: %w", err)
 	}
 
+	// Check the extension's declared native dependencies before building, so a
+	// missing library is reported as such instead of as a compiler or linker
+	// error. Returns the environment that tells the build where they are.
+	depEnv, err := resolveSystemDeps(extDir)
+	if err != nil {
+		return err
+	}
+
 	fmt.Printf("Building %s...\n", extName)
 
 	// Build and install
@@ -125,6 +136,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		PgConfig: pgConfig,
 		UseSudo:  useSudo,
 		Features: features,
+		Env:      depEnv,
 	}
 	if err := b.Install(extDir, opts); err != nil {
 		return fmt.Errorf("failed to install extension: %w", err)

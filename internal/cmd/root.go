@@ -24,6 +24,11 @@ Manage installed extensions:
 
 Check your system:
   pgx doctor`,
+
+	// A command that fails at runtime has already explained why; appending the
+	// full usage block on top of that buries the actual message. Cobra still
+	// prints usage for genuine flag and argument errors.
+	SilenceUsage: true,
 }
 
 func Execute() error {

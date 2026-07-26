@@ -121,8 +121,8 @@ shared_preload_libraries = true    # this extension must be preloaded
 restart_required = false           # implied by the above
 
 [postgresql.settings]
-"pgkafka.port" = "9092"
-"pgkafka.advertised_host" = "localhost"
+"pg_kafka.port" = "9092"
+"pg_kafka.advertised_host" = "localhost"
 ```
 
 `pgx install` reports it; `--configure` writes it:
@@ -130,8 +130,8 @@ restart_required = false           # implied by the above
 ```
 pg_kafka needs PostgreSQL configuration:
   shared_preload_libraries += pg_kafka
-  pgkafka.advertised_host = 'localhost'
-  pgkafka.port = 9092
+  pg_kafka.advertised_host = 'localhost'
+  pg_kafka.port = 9092
 
   wrote /etc/postgresql/16/main/conf.d/00-pgbrew-shared-preload.conf
   wrote /etc/postgresql/16/main/conf.d/10-pgbrew-pg_kafka.conf

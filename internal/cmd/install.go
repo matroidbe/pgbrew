@@ -47,6 +47,7 @@ func init() {
 	installCmd.Flags().BoolVar(&installDeps, "install-deps", false, "Install missing system dependencies with the platform package manager")
 	installCmd.Flags().StringVar(&depsVia, "deps-via", "", depsViaHelp)
 	installCmd.Flags().BoolVar(&skipDepChecks, "skip-dep-check", false, "Skip the system dependency check")
+	installCmd.Flags().BoolVar(&skipToolchainCheck, "skip-toolchain-check", false, "Skip the cargo configuration toolchain check")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
@@ -118,6 +119,15 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	extName, err := b.GetExtensionName(extDir)
 	if err != nil {
 		return fmt.Errorf("failed to get extension name: %w", err)
+	}
+
+	// Verify the tools this project's own cargo configuration asks for. These
+	// are invisible to a generic toolchain check, and a missing one fails the
+	// build within seconds of starting it.
+	if b.Name() == "pgrx" {
+		if err := checkCargoToolchain(extDir); err != nil {
+			return err
+		}
 	}
 
 	// Check the extension's declared native dependencies before building, so a

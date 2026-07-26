@@ -27,6 +27,58 @@ const ManifestFile = "pgbrew.toml"
 // Manifest is the pgbrew section of an extension's metadata.
 type Manifest struct {
 	SystemDependencies []Dependency `toml:"system_dependencies"`
+
+	// Postgres declares the PostgreSQL configuration the extension needs in
+	// order to actually work once installed.
+	Postgres PostgresSection `toml:"postgresql"`
+}
+
+// PostgresSection declares the PostgreSQL configuration an extension requires.
+//
+// Installing the files is only half of it: an extension registering a
+// background worker does nothing unless its library is preloaded, and most
+// carry GUC settings that need to be set for it to behave.
+//
+// Declaring this beats inferring it. The previous approach grepped the source
+// for "BackgroundWorker", which cannot work for a C extension and cannot work
+// at all for a prebuilt bottle, where there is no source to grep.
+type PostgresSection struct {
+	// SharedPreloadLibraries says the extension must be in
+	// shared_preload_libraries, which requires a server restart.
+	SharedPreloadLibraries bool `toml:"shared_preload_libraries"`
+
+	// Library overrides the name added to shared_preload_libraries. Defaults to
+	// the extension name, which is almost always right.
+	Library string `toml:"library"`
+
+	// Settings are GUCs to set for the extension.
+	Settings map[string]string `toml:"settings"`
+
+	// RestartRequired forces a restart even without a preload requirement, for
+	// settings that cannot be applied by a reload.
+	RestartRequired bool `toml:"restart_required"`
+}
+
+// IsZero reports whether the extension declares no PostgreSQL configuration.
+func (p PostgresSection) IsZero() bool {
+	return !p.SharedPreloadLibraries && !p.RestartRequired && len(p.Settings) == 0
+}
+
+// NeedsRestart reports whether applying this configuration requires a restart
+// rather than a reload. shared_preload_libraries is only read at server start.
+func (p PostgresSection) NeedsRestart() bool {
+	return p.SharedPreloadLibraries || p.RestartRequired
+}
+
+// PreloadName returns the library name to add to shared_preload_libraries.
+func (p PostgresSection) PreloadName(extension string) string {
+	if !p.SharedPreloadLibraries {
+		return ""
+	}
+	if p.Library != "" {
+		return p.Library
+	}
+	return extension
 }
 
 // Dependency is one native library the extension needs in order to build.

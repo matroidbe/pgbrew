@@ -13,6 +13,7 @@ import (
 	"github.com/matroidbe/pgbrew/internal/bottle"
 	"github.com/matroidbe/pgbrew/internal/builder"
 	"github.com/matroidbe/pgbrew/internal/cellar"
+	"github.com/matroidbe/pgbrew/internal/sysdeps"
 	"github.com/spf13/cobra"
 )
 
@@ -127,6 +128,18 @@ func runBottle(cmd *cobra.Command, args []string) error {
 		BuildSystem: b.Name(),
 	}
 
+	// Carry the declared server configuration inside the bottle. A bottle
+	// install has no source tree to read it from, and an extension whose
+	// library is never preloaded silently does nothing.
+	if src, err := sysdeps.Load(extDir); err == nil && !src.Postgres.IsZero() {
+		manifest.Postgres = &bottle.PostgresConfig{
+			SharedPreloadLibraries: src.Postgres.SharedPreloadLibraries,
+			Library:                src.Postgres.Library,
+			Settings:               src.Postgres.Settings,
+			RestartRequired:        src.Postgres.RestartRequired,
+		}
+	}
+
 	if err := os.MkdirAll(bottleOutDir, 0o755); err != nil {
 		return err
 	}
@@ -154,6 +167,11 @@ func runBottle(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	for name := range files {
 		fmt.Printf("    %s\n", name)
+	}
+	if src, err := sysdeps.Load(extDir); err == nil {
+		if summary := describePlanForBottle(src.Postgres, extName); summary != "" {
+			fmt.Print(summary)
+		}
 	}
 	return nil
 }
@@ -209,7 +227,8 @@ func installFromBottle(source string) error {
 
 	fmt.Printf("\n✓ Successfully installed %s %s\n", b.Manifest.Name, b.Manifest.Version)
 	fmt.Printf("  Run: CREATE EXTENSION %s;\n", b.Manifest.Name)
-	return nil
+
+	return handlePostgresConfig(planFromBottle(b.Manifest))
 }
 
 // loadBottle reads a bottle from a local path or an http(s) URL.

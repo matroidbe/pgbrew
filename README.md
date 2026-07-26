@@ -107,6 +107,66 @@ anything outside `lib/` and `share/`), and every file's SHA-256. A bottle
 arrives over a network and is unpacked into privileged directories, so this is
 checked rather than assumed.
 
+## PostgreSQL Configuration
+
+Installing the files is only half of making an extension work. One that
+registers a background worker does nothing unless its library is in
+`shared_preload_libraries`, and most extensions carry GUC settings.
+
+An extension declares what it needs in its manifest:
+
+```toml
+[postgresql]
+shared_preload_libraries = true    # this extension must be preloaded
+restart_required = false           # implied by the above
+
+[postgresql.settings]
+"pgkafka.port" = "9092"
+"pgkafka.advertised_host" = "localhost"
+```
+
+`pgx install` reports it; `--configure` writes it:
+
+```
+pg_kafka needs PostgreSQL configuration:
+  shared_preload_libraries += pg_kafka
+  pgkafka.advertised_host = 'localhost'
+  pgkafka.port = 9092
+
+  wrote /etc/postgresql/16/main/conf.d/00-pgbrew-shared-preload.conf
+  wrote /etc/postgresql/16/main/conf.d/10-pgbrew-pg_kafka.conf
+  shared_preload_libraries = 'pg_cron, pg_kafka'
+
+  A restart is required for this to take effect:
+    sudo pg_ctlcluster 16 main restart
+```
+
+The declaration also travels **inside a bottle**, so a prebuilt install
+configures the server too — which is what makes "vanilla PostgreSQL to working
+demo" a couple of commands.
+
+### How it writes
+
+**Drop-in files, never postgresql.conf.** Changes go to
+`conf.d/10-pgbrew-<extension>.conf`, so they are attributable per extension and
+removed cleanly on `pgx uninstall`. The only thing ever added to
+`postgresql.conf` is an `include_dir` line, and only if one is not already
+there.
+
+**`shared_preload_libraries` is merged, never overwritten.** It is a single
+cumulative list shared by every preloaded extension, so writing it would
+silently disable whatever was already there. pgbrew reads the existing value
+(from `postgresql.conf` and from its own previous drop-in), appends, and
+de-duplicates. Existing entries keep their position, since load order can
+matter. `pgx uninstall` takes the entry back out — a stale name in that list
+stops the server from starting.
+
+**Nothing is restarted for you.** pgbrew prints the command. Restarting a
+database is an outage, and that is not a package manager's call.
+
+Known limitation: if you remove a library from `postgresql.conf` by hand after
+pgbrew has merged it, it stays in pgbrew's drop-in. Remove it there too.
+
 ## System Dependencies
 
 Some extensions need a native library present *before* they can compile —

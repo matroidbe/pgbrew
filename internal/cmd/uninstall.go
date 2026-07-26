@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	uninstallDryRun bool
+	uninstallDryRun  bool
 	uninstallUseSudo bool
 )
 
@@ -93,6 +93,10 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 
 	if len(files) == 0 {
 		fmt.Println("No extension files found.")
+		// The configuration can outlive the files — someone may have deleted
+		// them by hand. Clean it up anyway: a shared_preload_libraries entry
+		// naming a library that is not there stops the server from starting.
+		removePostgresConfig(name)
 		return nil
 	}
 
@@ -163,6 +167,12 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  - %s\n", f)
 		}
 	}
+
+	// Take the extension's configuration back out. A stale entry here is not
+	// cosmetic: PostgreSQL refuses to start if shared_preload_libraries names a
+	// library that no longer exists, so leaving it behind turns an uninstall
+	// into a server that will not come back up after the next restart.
+	removePostgresConfig(name)
 
 	return nil
 }

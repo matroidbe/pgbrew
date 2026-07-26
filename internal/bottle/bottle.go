@@ -64,6 +64,20 @@ type Manifest struct {
 	// Files maps each archive path to its SHA-256, so tampering or truncation
 	// is caught before anything is written into a PostgreSQL directory.
 	Files map[string]string `json:"files"`
+
+	// Postgres carries the server configuration the extension needs. It travels
+	// inside the bottle because a bottle install has no source tree to consult,
+	// and an extension whose library is not preloaded silently does nothing.
+	Postgres *PostgresConfig `json:"postgresql,omitempty"`
+}
+
+// PostgresConfig is the server configuration an extension requires, as carried
+// in a bottle. It mirrors the [postgresql] section of a pgbrew manifest.
+type PostgresConfig struct {
+	SharedPreloadLibraries bool              `json:"shared_preload_libraries,omitempty"`
+	Library                string            `json:"library,omitempty"`
+	Settings               map[string]string `json:"settings,omitempty"`
+	RestartRequired        bool              `json:"restart_required,omitempty"`
 }
 
 // Filename is the conventional bottle filename for a manifest.

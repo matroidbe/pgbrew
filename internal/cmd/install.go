@@ -10,6 +10,7 @@ import (
 	"github.com/matroidbe/pgbrew/internal/builder"
 	"github.com/matroidbe/pgbrew/internal/cellar"
 	"github.com/matroidbe/pgbrew/internal/github"
+	"github.com/matroidbe/pgbrew/internal/sysdeps"
 	"github.com/spf13/cobra"
 
 	// Register builders
@@ -53,6 +54,7 @@ func init() {
 	installCmd.Flags().StringVar(&depsVia, "deps-via", "", depsViaHelp)
 	installCmd.Flags().BoolVar(&skipDepChecks, "skip-dep-check", false, "Skip the system dependency check")
 	installCmd.Flags().BoolVar(&skipToolchainCheck, "skip-toolchain-check", false, "Skip the cargo configuration toolchain check")
+	installCmd.Flags().BoolVar(&configureServer, "configure", false, "Write the PostgreSQL configuration the extension declares (conf.d drop-in)")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
@@ -196,20 +198,20 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\n✓ Successfully installed %s %s\n", extName, version)
 	fmt.Printf("  Run: CREATE EXTENSION %s;\n", extName)
 
-	// Check if extension needs shared_preload_libraries
-	if b.NeedsSharedPreload(extDir) {
-		pgMajor := getPgVersion()
-		pgMajorInt := 0
-		fmt.Sscanf(pgMajor, "%d", &pgMajorInt)
-
-		// Most background worker extensions need shared_preload_libraries on PG < 17
-		if pgMajorInt > 0 && pgMajorInt < 17 {
-			fmt.Println()
-			fmt.Println("⚠ This extension uses background workers.")
-			fmt.Println("  You may need to add it to shared_preload_libraries in postgresql.conf:")
-			fmt.Printf("    shared_preload_libraries = '%s'\n", extName)
-			fmt.Println("  Then restart PostgreSQL.")
+	// Apply (or report) the PostgreSQL configuration the extension declares.
+	// A declaration is authoritative; the source heuristic is only a fallback
+	// for extensions that have not declared anything.
+	manifest, mErr := sysdeps.Load(extDir)
+	declared := mErr == nil && !manifest.Postgres.IsZero()
+	if declared {
+		if err := handlePostgresConfig(planFromManifest(extName, manifest.Postgres)); err != nil {
+			return err
 		}
+	} else {
+		// No declaration: fall back to inferring from the source. Note this is
+		// version-independent — a library registering a background worker in
+		// _PG_init must be preloaded on every PostgreSQL version.
+		preloadWarning(extName, b.NeedsSharedPreload(extDir))
 	}
 
 	return nil

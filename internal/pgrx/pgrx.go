@@ -425,6 +425,29 @@ func libraryPathVar() string {
 	return "LD_LIBRARY_PATH"
 }
 
+// withGitCLIFetch tells cargo to fetch git dependencies by shelling out to
+// git, unless the caller has already stated a preference.
+//
+// pgbrew clones the extension with the git CLI, so it inherits the user's
+// credential helper, SSH agent and keychain — whatever let them clone a
+// private repo. Cargo's built-in libgit2 fetcher does not, and it is the one
+// that resolves the workspace's own git dependencies. Without this, a private
+// transitive dependency authenticates for the clone and then 401s during the
+// build, inside a single `pgx install`. Aligning the two means: if git can
+// reach it, so can the build.
+//
+// An explicit CARGO_NET_GIT_FETCH_WITH_CLI is left alone, including when it
+// says false — that is a deliberate choice and not ours to overrule.
+func withGitCLIFetch(env []string) []string {
+	const key = "CARGO_NET_GIT_FETCH_WITH_CLI"
+	for _, entry := range env {
+		if strings.HasPrefix(entry, key+"=") {
+			return env
+		}
+	}
+	return append(env, key+"=true")
+}
+
 // withLDPath returns env with depsDir prepended to the loader's search path.
 func withLDPath(env []string, depsDir string) []string {
 	key := libraryPathVar()
@@ -597,7 +620,7 @@ func Install(dir string, opts InstallOptions) error {
 		cmd.Dir = dir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		cmd.Env = sysdeps.ApplyEnv(os.Environ(), opts.Env)
+		cmd.Env = withGitCLIFetch(sysdeps.ApplyEnv(os.Environ(), opts.Env))
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("make install failed: %w", err)
 		}
@@ -650,7 +673,7 @@ func Install(dir string, opts InstallOptions) error {
 
 	// Start from the current environment plus any system-dependency locations
 	// pgbrew discovered, so the extension's build script can find them.
-	env := sysdeps.ApplyEnv(os.Environ(), opts.Env)
+	env := withGitCLIFetch(sysdeps.ApplyEnv(os.Environ(), opts.Env))
 
 	// Add target deps directories to LD_LIBRARY_PATH so the pgrx_embed binary
 	// can find companion shared libraries (e.g., libxgboost.so) during SQL generation.
@@ -734,7 +757,7 @@ func Package(dir string, opts InstallOptions) (string, error) {
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = sysdeps.ApplyEnv(os.Environ(), opts.Env)
+	cmd.Env = withGitCLIFetch(sysdeps.ApplyEnv(os.Environ(), opts.Env))
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("cargo pgrx package failed: %w", err)
 	}

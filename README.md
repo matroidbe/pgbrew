@@ -342,6 +342,43 @@ PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config pgx install --sudo github.com/pgv
 - Rust toolchain
 - cargo-pgrx (`cargo install cargo-pgrx`)
 
+## Cargo Configurations Written for Another Machine
+
+A Rust extension's `.cargo/config.toml` is committed, so it applies to everyone
+who clones the repo — but cargo has no host predicate for `[build]` or `[env]`.
+A project developed on Linux ends up telling every macOS clone to use a compiler
+cache that isn't installed and a libclang under `/usr/lib/llvm-20/lib`, which is
+not a path anyone can create on a Mac. The build fails within seconds.
+
+`pgx install` reconciles that configuration with the machine it is running on:
+
+```
+This project's cargo configuration was written for another machine.
+Adjusting the build environment:
+  → build.rustc-wrapper = "sccache" (config.toml): sccache is not installed;
+    building without the compiler cache (slower, same result)
+  → env.LIBCLANG_PATH = "/usr/lib/llvm-20/lib" (config.toml): does not exist
+    here; using this machine's libclang at /Library/Developer/CommandLineTools/usr/lib
+```
+
+What it will and will not do:
+
+- **Compiler caches** (`sccache`, `ccache`) named as `build.rustc-wrapper` are
+  bypassed when missing. A cache hands back what the compiler would have
+  produced, so dropping it costs time and nothing else. A rustc wrapper pgbrew
+  does not recognise is left alone and still stops the build — it may be doing
+  something the result depends on.
+- **`LIBCLANG_PATH`** pointing at a directory that does not exist is retargeted
+  at this machine's libclang (Xcode/Command Line Tools first on macOS, then
+  Homebrew LLVM; the newest versioned LLVM on Linux). If no libclang is
+  installed at all, that stays an error — pgbrew cannot invent one.
+- **Genuinely missing tools** — a linker, `mold` in `rustflags`, any other
+  `[env]` path — still stop the build, because there is nothing to substitute.
+
+Everything is an environment override for that one build; nothing is written to
+your `.cargo/config.toml` or the project's. `--skip-toolchain-check` opts out of
+the whole pass.
+
 ## How It Works
 
 1. `pgx install` clones the repository (or uses local path)

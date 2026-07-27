@@ -75,8 +75,10 @@ func runBottle(cmd *cobra.Command, args []string) error {
 
 	// Building a bottle is building the extension, so it needs the same
 	// prerequisites an install does.
+	var toolchainEnv []string
 	if b.Name() == "pgrx" {
-		if err := checkCargoToolchain(extDir); err != nil {
+		toolchainEnv, err = resolveCargoToolchain(extDir)
+		if err != nil {
 			return err
 		}
 	}
@@ -95,7 +97,7 @@ func runBottle(cmd *cobra.Command, args []string) error {
 	stageRoot, err := b.Package(extDir, builder.InstallOptions{
 		PgConfig: pgConfig,
 		Features: features,
-		Env:      depEnv,
+		Env:      append(toolchainEnv, depEnv...),
 	})
 	if err != nil {
 		return err

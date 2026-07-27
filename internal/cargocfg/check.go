@@ -42,15 +42,20 @@ type Checker struct {
 	Exists func(string) bool
 	// LookupEnv reads an environment variable, used to honour overrides.
 	LookupEnv func(string) (string, bool)
+	// FindLibclang locates this machine's libclang, used when a config pins
+	// LIBCLANG_PATH to a directory that only exists on the machine it was
+	// written on. Nil means ask the real system.
+	FindLibclang func() (string, bool)
 }
 
 // NewChecker returns a Checker wired to the real system.
 func NewChecker() *Checker {
 	return &Checker{
-		HostTriple: HostTriple(),
-		LookPath:   exec.LookPath,
-		Exists:     func(p string) bool { _, err := os.Stat(p); return err == nil },
-		LookupEnv:  os.LookupEnv,
+		HostTriple:   HostTriple(),
+		LookPath:     exec.LookPath,
+		Exists:       func(p string) bool { _, err := os.Stat(p); return err == nil },
+		LookupEnv:    os.LookupEnv,
+		FindLibclang: FindLibclang,
 	}
 }
 

@@ -140,11 +140,15 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get extension name: %w", err)
 	}
 
-	// Verify the tools this project's own cargo configuration asks for. These
-	// are invisible to a generic toolchain check, and a missing one fails the
-	// build within seconds of starting it.
+	// Reconcile the tools this project's own cargo configuration asks for with
+	// what this machine has. These requirements are invisible to a generic
+	// toolchain check, and an unmet one fails the build within seconds of
+	// starting it. Returns the overrides that retarget settings written for a
+	// different operating system.
+	var toolchainEnv []string
 	if b.Name() == "pgrx" {
-		if err := checkCargoToolchain(extDir); err != nil {
+		toolchainEnv, err = resolveCargoToolchain(extDir)
+		if err != nil {
 			return err
 		}
 	}
@@ -165,7 +169,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		PgConfig: pgConfig,
 		UseSudo:  useSudo,
 		Features: features,
-		Env:      depEnv,
+		// Declared dependencies come last so an extension's own manifest wins
+		// over pgbrew's guess at where a pinned tool should point.
+		Env: append(toolchainEnv, depEnv...),
 	}
 	if err := b.Install(extDir, opts); err != nil {
 		return fmt.Errorf("failed to install extension: %w", err)

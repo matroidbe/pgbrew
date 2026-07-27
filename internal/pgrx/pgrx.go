@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -410,13 +411,28 @@ func findDepsDir(dir, profile string) string {
 	return ""
 }
 
-// withLDPath returns env with depsDir prepended to LD_LIBRARY_PATH.
+// libraryPathVar is the variable this platform's dynamic loader searches.
+//
+// LD_LIBRARY_PATH is glibc's; macOS's dyld ignores it entirely and reads
+// DYLD_LIBRARY_PATH instead. Setting the wrong one is not an error, it is
+// silence: the loader simply never looks where we pointed it, and the
+// pgrx_embed step fails to find a companion library that is sitting right
+// there in the target directory.
+func libraryPathVar() string {
+	if runtime.GOOS == "darwin" {
+		return "DYLD_LIBRARY_PATH"
+	}
+	return "LD_LIBRARY_PATH"
+}
+
+// withLDPath returns env with depsDir prepended to the loader's search path.
 func withLDPath(env []string, depsDir string) []string {
+	key := libraryPathVar()
 	ldPath := depsDir
-	if existing := os.Getenv("LD_LIBRARY_PATH"); existing != "" {
+	if existing := os.Getenv(key); existing != "" {
 		ldPath = depsDir + ":" + existing
 	}
-	return updateEnv(env, "LD_LIBRARY_PATH", ldPath)
+	return updateEnv(env, key, ldPath)
 }
 
 // updateEnv replaces or appends a KEY=VALUE pair in an environment slice.
@@ -445,6 +461,15 @@ func getPkgLibDir(pgConfig string) (string, error) {
 // .so depends on and copies them to the PostgreSQL lib directory so they
 // are found at runtime. Returns the number of libraries installed.
 func installCompanionLibs(extName, depsDir, pgLibDir string, useSudo bool) int {
+	// ldd and ldconfig are glibc tools. macOS resolves dylibs through install
+	// names and @rpath rather than a system-wide cache, so neither the search
+	// for "not found" entries nor the ldconfig registration below has a dyld
+	// equivalent — a copy into pkglibdir would not make the loader find it.
+	// Skip rather than shell out to a binary that is not there.
+	if runtime.GOOS != "linux" {
+		return 0
+	}
+
 	extSo := filepath.Join(pgLibDir, extName+".so")
 	if _, err := os.Stat(extSo); err != nil {
 		return 0

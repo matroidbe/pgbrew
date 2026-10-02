@@ -185,3 +185,62 @@ version = "1.0.0"
 		t.Errorf("got %q, want %q", got, "real_ext")
 	}
 }
+
+// Builds pass --no-default-features so the crate's default PostgreSQL feature
+// (pg16, say) does not collide with the one for the target pg_config. But that
+// also dropped every other default feature: pg_ortools defaults to
+// ["pg16", "cpsat"], so its bottle shipped without the cpsat SQL functions —
+// a different catalog under the same extension version than a plain
+// `cargo pgrx install`. Only the pgNN defaults may be swapped out.
+func TestFeatureListKeepsNonPostgresDefaults(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Cargo.toml", `
+[package]
+name = "pg_ortools"
+version = "0.3.0"
+
+[features]
+default = ["pg16", "cpsat"]
+pg16 = ["pgrx/pg16"]
+pg18 = ["pgrx/pg18"]
+cpsat = []
+`)
+
+	got := featureList(dir, "18", nil)
+	if got != "pg18,cpsat" {
+		t.Errorf("got %q, want %q — cpsat is a default feature and must survive", got, "pg18,cpsat")
+	}
+}
+
+// Requested features are added after the defaults, without repeating any.
+func TestFeatureListAppendsRequestedFeaturesOnce(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Cargo.toml", `
+[package]
+name = "pg_streaming"
+
+[features]
+default = ["pg18", "xarray"]
+xarray = []
+modbus = []
+`)
+
+	got := featureList(dir, "17", []string{"modbus", "xarray", "pg17"})
+	if got != "pg17,xarray,modbus" {
+		t.Errorf("got %q, want %q", got, "pg17,xarray,modbus")
+	}
+}
+
+// A crate without a [features] table (or an unreadable Cargo.toml) still gets
+// the PostgreSQL feature — the previous behaviour.
+func TestFeatureListWithoutDefaults(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Cargo.toml", "[package]\nname = \"plain\"\n")
+
+	if got := featureList(dir, "18", []string{"extra"}); got != "pg18,extra" {
+		t.Errorf("got %q, want %q", got, "pg18,extra")
+	}
+	if got := featureList(t.TempDir(), "18", nil); got != "pg18" {
+		t.Errorf("missing Cargo.toml: got %q, want %q", got, "pg18")
+	}
+}

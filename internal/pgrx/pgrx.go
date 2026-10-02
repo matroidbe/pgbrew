@@ -144,6 +144,9 @@ type cargoPackageManifest struct {
 		Name    string      `toml:"name"`
 		Version interface{} `toml:"version"`
 	} `toml:"package"`
+	Features struct {
+		Default []string `toml:"default"`
+	} `toml:"features"`
 	Workspace *struct {
 		Package struct {
 			Version string `toml:"version"`
@@ -161,6 +164,36 @@ func readCargo(dir string) (*cargoPackageManifest, error) {
 		return nil, fmt.Errorf("parsing Cargo.toml: %w", err)
 	}
 	return &m, nil
+}
+
+// pgFeaturePattern matches pgrx's PostgreSQL-version features (pg13 … pg18).
+var pgFeaturePattern = regexp.MustCompile(`^pg[0-9]+$`)
+
+// featureList is the --features value for a build against PostgreSQL
+// pgMajorVersion. Builds pass --no-default-features so the crate's default
+// PostgreSQL feature cannot collide with the target's, so the crate's other
+// default features are listed again here: dropping them would build a
+// different SQL surface than `cargo pgrx install` does for the same version.
+// Requested features follow, each feature appearing once.
+func featureList(dir, pgMajorVersion string, requested []string) string {
+	features := []string{"pg" + pgMajorVersion}
+	seen := map[string]bool{features[0]: true}
+	add := func(f string) {
+		if f == "" || seen[f] || pgFeaturePattern.MatchString(f) {
+			return
+		}
+		seen[f] = true
+		features = append(features, f)
+	}
+	if manifest, err := readCargo(dir); err == nil {
+		for _, f := range manifest.Features.Default {
+			add(f)
+		}
+	}
+	for _, f := range requested {
+		add(f)
+	}
+	return strings.Join(features, ",")
 }
 
 // workspaceVersion walks up from dir looking for the workspace root that
@@ -652,13 +685,9 @@ func Install(dir string, opts InstallOptions) error {
 	// Pass pg_config path
 	args = append(args, "--pg-config", pgConfig)
 
-	// Disable default features and specify only the correct pg version feature
-	pgFeature := "pg" + pgMajorVersion
-	featureList := pgFeature
-	if len(opts.Features) > 0 {
-		featureList += "," + strings.Join(opts.Features, ",")
-	}
-	args = append(args, "--no-default-features", "--features", featureList)
+	// Swap the crate's default PostgreSQL feature for the target's, keeping
+	// its other default features.
+	args = append(args, "--no-default-features", "--features", featureList(dir, pgMajorVersion, opts.Features))
 
 	// Add sudo flag if requested
 	if opts.UseSudo {
@@ -740,17 +769,11 @@ func Package(dir string, opts InstallOptions) (string, error) {
 		return "", fmt.Errorf("could not determine PostgreSQL version: %w", err)
 	}
 
-	pgFeature := "pg" + pgMajorVersion
-	featureList := pgFeature
-	if len(opts.Features) > 0 {
-		featureList += "," + strings.Join(opts.Features, ",")
-	}
-
 	args := []string{
 		"pgrx", "package",
 		"--pg-config", pgConfig,
 		"--no-default-features",
-		"--features", featureList,
+		"--features", featureList(dir, pgMajorVersion, opts.Features),
 	}
 
 	cmd := exec.Command("cargo", args...)

@@ -207,12 +207,15 @@ func installFromBottle(source string) error {
 	fmt.Printf("Installing %s %s from a bottle (%s)\n",
 		b.Manifest.Name, b.Manifest.Version, b.Manifest.Target())
 
-	written, err := b.Install(pkgLibDir, shareDir, useSudo)
+	written, unchanged, err := b.Install(pkgLibDir, shareDir, useSudo)
 	if err != nil {
 		return err
 	}
 	for _, path := range written {
 		fmt.Printf("  %s\n", path)
+	}
+	if len(unchanged) > 0 {
+		fmt.Printf("  (%d file(s) already installed and identical, left as they are)\n", len(unchanged))
 	}
 
 	cellar.SetUseSudo(useSudo)
@@ -227,7 +230,11 @@ func installFromBottle(source string) error {
 		return fmt.Errorf("failed to record installation: %w", err)
 	}
 
-	fmt.Printf("\n✓ Successfully installed %s %s\n", b.Manifest.Name, b.Manifest.Version)
+	if len(written) == 0 {
+		fmt.Printf("\n✓ %s %s is already installed\n", b.Manifest.Name, b.Manifest.Version)
+	} else {
+		fmt.Printf("\n✓ Successfully installed %s %s\n", b.Manifest.Name, b.Manifest.Version)
+	}
 	fmt.Printf("  Run: CREATE EXTENSION %s;\n", b.Manifest.Name)
 
 	return handlePostgresConfig(planFromBottle(b.Manifest))

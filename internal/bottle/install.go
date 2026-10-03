@@ -1,6 +1,7 @@
 package bottle
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,10 +15,10 @@ import (
 // Everything has already been checksum-verified by Open, so by the time
 // anything reaches a privileged directory it is known to be what the manifest
 // described.
-func (b *Bottle) Install(pkgLibDir, shareDir string, useSudo bool) ([]string, error) {
+func (b *Bottle) Install(pkgLibDir, shareDir string, useSudo bool) (written, unchanged []string, err error) {
 	paths, err := b.InstallPaths(pkgLibDir, shareDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Deterministic order, so the output reads the same way every time.
@@ -27,19 +28,26 @@ func (b *Bottle) Install(pkgLibDir, shareDir string, useSudo bool) ([]string, er
 	}
 	sort.Strings(names)
 
-	written := make([]string, 0, len(names))
 	for _, name := range names {
 		dest := paths[name]
+		// Already in place, byte for byte: leave it. A reinstall then needs
+		// no write access at all, which is what lets `pgx install
+		// --configure` run as a user who cannot write the extension
+		// directories (e.g. Docker's first-start hook, as postgres).
+		if existing, err := os.ReadFile(dest); err == nil && bytes.Equal(existing, b.Contents[name]) {
+			unchanged = append(unchanged, dest)
+			continue
+		}
 		mode := os.FileMode(0o644)
 		if strings.HasPrefix(name, LibDir+"/") {
 			mode = 0o755
 		}
 		if err := writeFile(dest, b.Contents[name], mode, useSudo); err != nil {
-			return written, fmt.Errorf("installing %s: %w", dest, err)
+			return written, unchanged, fmt.Errorf("installing %s: %w", dest, err)
 		}
 		written = append(written, dest)
 	}
-	return written, nil
+	return written, unchanged, nil
 }
 
 // writeFile writes content to dest, elevating if asked.

@@ -145,6 +145,20 @@ The declaration also travels **inside a bottle**, so a prebuilt install
 configures the server too — which is what makes "vanilla PostgreSQL to working
 demo" a couple of commands.
 
+### Configuring an extension that is already installed
+
+Reinstalling a bottle whose files are already in place, byte for byte, writes
+no files and no install record, so `pgx install --configure --bottle <same
+bottle>` needs only write access to the server's configuration. That is the
+pattern for container images: install the bottles as root at build time, then
+configure from a first-start hook that runs as `postgres`:
+
+```dockerfile
+RUN pgx install --bottle /bottles/pg_kafka-0.3.1-pg18-linux-amd64.tar.gz
+COPY configure.sh /docker-entrypoint-initdb.d/
+# configure.sh: pgx install --configure --bottle /bottles/pg_kafka-… --set pg_kafka.database=app
+```
+
 ### Overriding settings with `--set`
 
 Declared settings are defaults. Override one, or add one the extension does not

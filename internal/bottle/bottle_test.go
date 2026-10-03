@@ -327,7 +327,7 @@ func TestInstallWritesFiles(t *testing.T) {
 	libDir := filepath.Join(root, "lib")
 	shareDir := filepath.Join(root, "share")
 
-	written, err := b.Install(libDir, shareDir, false)
+	written, _, err := b.Install(libDir, shareDir, false)
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -447,4 +447,72 @@ func keys(m map[string][]byte) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// Reinstalling a bottle whose files are already in place writes nothing, so
+// `pgx install --configure` works for a user who cannot write the extension
+// directories (Docker's first-start hook runs as postgres): the files were
+// installed at image build, the hook only needs the configuration.
+func TestInstallSkipsIdenticalFiles(t *testing.T) {
+	data := createBottle(t, sampleManifest(), sampleFiles())
+	b, err := Open(bytes.NewReader(data), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	libDir, shareDir := filepath.Join(root, "lib"), filepath.Join(root, "share")
+	if _, _, err := b.Install(libDir, shareDir, false); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+
+	// Read-only directories: any write would now fail.
+	for _, d := range []string{libDir, filepath.Join(shareDir, "extension")} {
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(d, 0o755) })
+	}
+
+	written, unchanged, err := b.Install(libDir, shareDir, false)
+	if err != nil {
+		t.Fatalf("reinstall over identical files: %v", err)
+	}
+	if len(written) != 0 {
+		t.Errorf("written = %v, want none", written)
+	}
+	if len(unchanged) != len(sampleFiles()) {
+		t.Errorf("unchanged = %v, want all %d files", unchanged, len(sampleFiles()))
+	}
+}
+
+// A file that differs (an older build) is still replaced.
+func TestInstallReplacesDifferingFiles(t *testing.T) {
+	data := createBottle(t, sampleManifest(), sampleFiles())
+	b, err := Open(bytes.NewReader(data), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	libDir, shareDir := filepath.Join(root, "lib"), filepath.Join(root, "share")
+	if _, _, err := b.Install(libDir, shareDir, false); err != nil {
+		t.Fatal(err)
+	}
+	so := filepath.Join(libDir, "pg_solid.so")
+	if err := os.WriteFile(so, []byte("older build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	written, unchanged, err := b.Install(libDir, shareDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) != 1 || written[0] != so {
+		t.Errorf("written = %v, want only %s", written, so)
+	}
+	if len(unchanged) != 2 {
+		t.Errorf("unchanged = %v, want the 2 identical files", unchanged)
+	}
+	if got, _ := os.ReadFile(so); string(got) != "ELF-ish bytes" {
+		t.Errorf("%s = %q, not replaced", so, got)
+	}
 }

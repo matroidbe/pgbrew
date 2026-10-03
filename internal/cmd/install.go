@@ -10,6 +10,7 @@ import (
 	"github.com/matroidbe/pgbrew/internal/builder"
 	"github.com/matroidbe/pgbrew/internal/cellar"
 	"github.com/matroidbe/pgbrew/internal/github"
+	"github.com/matroidbe/pgbrew/internal/pgconf"
 	"github.com/matroidbe/pgbrew/internal/sysdeps"
 	"github.com/spf13/cobra"
 
@@ -39,7 +40,8 @@ Examples:
   pgx install --sudo github.com/pgvector/pgvector  # Install with sudo for system PostgreSQL
   pgx install --features my_feature ./my_ext       # Enable additional Cargo features (pgrx)
   pgx install --bottle pg_solid-0.2.0-pg16-linux-amd64.tar.gz   # Install a prebuilt artifact
-  pgx install --bottle https://example.com/bottles/pg_solid-0.2.0-pg16-linux-amd64.tar.gz`,
+  pgx install --bottle https://example.com/bottles/pg_solid-0.2.0-pg16-linux-amd64.tar.gz
+  pgx install --configure --set pg_kafka.database=app --bottle <url>  # Override a declared setting`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runInstall,
 }
@@ -55,9 +57,18 @@ func init() {
 	installCmd.Flags().BoolVar(&skipDepChecks, "skip-dep-check", false, "Skip the system dependency check")
 	installCmd.Flags().BoolVar(&skipToolchainCheck, "skip-toolchain-check", false, "Skip the cargo configuration toolchain check")
 	installCmd.Flags().BoolVar(&configureServer, "configure", false, "Write the PostgreSQL configuration the extension declares (conf.d drop-in)")
+	installCmd.Flags().StringArrayVar(&setArgs, "set", nil, "Override or add a PostgreSQL setting, key=value (repeatable; value may contain commas)")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
+	// Validate --set before anything is fetched, built or installed: a typo
+	// found after the files are in place leaves a half-configured extension.
+	overrides, err := pgconf.ParseOverrides(setArgs)
+	if err != nil {
+		return fmt.Errorf("--set: %w", err)
+	}
+	setOverrides = overrides
+
 	// A bottle is a prebuilt artifact: no source, no toolchain, no build. It
 	// carries its own identity, so no source argument is needed.
 	if bottleSource != "" {
@@ -209,11 +220,16 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	// for extensions that have not declared anything.
 	manifest, mErr := sysdeps.Load(extDir)
 	declared := mErr == nil && !manifest.Postgres.IsZero()
-	if declared {
-		if err := handlePostgresConfig(planFromManifest(extName, manifest.Postgres)); err != nil {
+	if declared || len(setOverrides) > 0 {
+		var section sysdeps.PostgresSection
+		if declared {
+			section = manifest.Postgres
+		}
+		if err := handlePostgresConfig(planFromManifest(extName, section)); err != nil {
 			return err
 		}
-	} else {
+	}
+	if !declared {
 		// No declaration: fall back to inferring from the source. Note this is
 		// version-independent — a library registering a background worker in
 		// _PG_init must be preloaded on every PostgreSQL version.

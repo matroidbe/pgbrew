@@ -18,6 +18,7 @@ package pgconf
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -251,17 +252,11 @@ func isBareLiteral(value string) bool {
 	case "on", "off", "true", "false", "yes", "no":
 		return true
 	}
-	// A plain number, optionally with a unit PostgreSQL understands.
-	hasDigit := false
-	for i, r := range value {
-		switch {
-		case r >= '0' && r <= '9':
-			hasDigit = true
-		case r == '.' || (r == '-' && i == 0):
-			// part of a number
-		default:
-			return false
-		}
-	}
-	return hasDigit
+	// A plain integer or decimal. Anything else — an IP address, a version,
+	// a value with a unit — is quoted: postgresql.conf accepts quoted values
+	// for every setting, but a bare "0.0.0.0" is a syntax error that stops
+	// the server from starting.
+	return plainNumber.MatchString(value)
 }
+
+var plainNumber = regexp.MustCompile(`^-?(\d+|\d*\.\d+)$`)

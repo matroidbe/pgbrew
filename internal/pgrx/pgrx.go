@@ -166,6 +166,19 @@ func readCargo(dir string) (*cargoPackageManifest, error) {
 	return &m, nil
 }
 
+// stagingDir is where cargo-pgrx stages a package for one PostgreSQL major.
+func stagingDir(targetDir, extName, pgMajorVersion string) string {
+	return filepath.Join(targetDir, "release", fmt.Sprintf("%s-pg%s", extName, pgMajorVersion))
+}
+
+// resetStagingDir removes a previous package run's staging tree.
+func resetStagingDir(stageRoot string) error {
+	if err := os.RemoveAll(stageRoot); err != nil {
+		return fmt.Errorf("clearing stale staging dir %s: %w", stageRoot, err)
+	}
+	return nil
+}
+
 // pgFeaturePattern matches pgrx's PostgreSQL-version features (pg13 … pg18).
 var pgFeaturePattern = regexp.MustCompile(`^pg[0-9]+$`)
 
@@ -769,6 +782,18 @@ func Package(dir string, opts InstallOptions) (string, error) {
 		return "", fmt.Errorf("could not determine PostgreSQL version: %w", err)
 	}
 
+	extName, err := GetExtensionName(dir)
+	if err != nil {
+		return "", err
+	}
+	// cargo-pgrx stages into <target>/release/<extension>-pg<major> and never
+	// cleans it, so files from an earlier build of another version (its
+	// install script, say) would end up in the bottle. Start empty.
+	stageRoot := stagingDir(resolveTargetDir(dir), extName, pgMajorVersion)
+	if err := resetStagingDir(stageRoot); err != nil {
+		return "", err
+	}
+
 	args := []string{
 		"pgrx", "package",
 		"--pg-config", pgConfig,
@@ -785,14 +810,6 @@ func Package(dir string, opts InstallOptions) (string, error) {
 		return "", fmt.Errorf("cargo pgrx package failed: %w", err)
 	}
 
-	extName, err := GetExtensionName(dir)
-	if err != nil {
-		return "", err
-	}
-
-	// cargo-pgrx stages into <target>/release/<extension>-pg<major>.
-	stageRoot := filepath.Join(resolveTargetDir(dir), "release",
-		fmt.Sprintf("%s-pg%s", extName, pgMajorVersion))
 	if info, err := os.Stat(stageRoot); err != nil || !info.IsDir() {
 		return "", fmt.Errorf("expected cargo pgrx to stage into %s, but it is not there", stageRoot)
 	}

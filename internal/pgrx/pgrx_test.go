@@ -244,3 +244,37 @@ func TestFeatureListWithoutDefaults(t *testing.T) {
 		t.Errorf("missing Cargo.toml: got %q, want %q", got, "pg18")
 	}
 }
+
+// cargo pgrx package stages into <target>/release/<ext>-pg<major> and never
+// cleans it. A build cache that outlives a version bump kept the previous
+// version's install script there (pg_kafka--0.3.0.sql next to a 0.3.1 build),
+// and the bottle shipped it. The staging directory is emptied before each
+// package run.
+func TestStagingDirLayout(t *testing.T) {
+	got := stagingDir("/t", "pg_kafka", "18")
+	if want := filepath.Join("/t", "release", "pg_kafka-pg18"); got != want {
+		t.Errorf("stagingDir = %q, want %q", got, want)
+	}
+}
+
+func TestResetStagingDirRemovesStaleFiles(t *testing.T) {
+	stage := filepath.Join(t.TempDir(), "release", "pg_kafka-pg18")
+	stale := filepath.Join(stage, "usr", "share", "postgresql", "extension")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, stale, "pg_kafka--0.3.0.sql", "-- old install script\n")
+
+	if err := resetStagingDir(stage); err != nil {
+		t.Fatalf("resetStagingDir: %v", err)
+	}
+	if _, err := os.Stat(stage); !os.IsNotExist(err) {
+		t.Errorf("staging dir still exists after reset (err=%v)", err)
+	}
+}
+
+func TestResetStagingDirToleratesMissingDir(t *testing.T) {
+	if err := resetStagingDir(filepath.Join(t.TempDir(), "absent")); err != nil {
+		t.Errorf("resetStagingDir on a missing dir: %v", err)
+	}
+}

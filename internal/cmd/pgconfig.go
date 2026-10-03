@@ -14,6 +14,13 @@ import (
 // an extension declares.
 var configureServer bool
 
+// setArgs holds the raw --set flags; setOverrides is their parsed form, filled
+// in by runInstall before anything is installed.
+var (
+	setArgs      []string
+	setOverrides map[string]string
+)
+
 // planFromManifest builds a configuration plan from a source manifest.
 func planFromManifest(extension string, section sysdeps.PostgresSection) pgconf.Plan {
 	return pgconf.Plan{
@@ -51,7 +58,11 @@ func planFromBottle(m bottle.Manifest) pgconf.Plan {
 // Reporting is the default because this changes a database server's
 // configuration, and on a machine that is not the user's demo box that is not a
 // decision pgbrew should make silently.
+//
+// Settings given with --set are applied over the declared ones here, so the
+// report and the written drop-in both show the effective values.
 func handlePostgresConfig(plan pgconf.Plan) error {
+	plan, undeclared := plan.WithOverrides(setOverrides)
 	if plan.IsEmpty() {
 		return nil
 	}
@@ -59,6 +70,9 @@ func handlePostgresConfig(plan pgconf.Plan) error {
 	fmt.Println()
 	fmt.Printf("%s needs PostgreSQL configuration:\n", plan.Extension)
 	fmt.Print(plan.Describe())
+	for _, key := range undeclared {
+		fmt.Printf("  note: %s is not a setting %s declares; setting it anyway.\n", key, plan.Extension)
+	}
 
 	if !configureServer {
 		fmt.Println()

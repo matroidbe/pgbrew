@@ -19,6 +19,9 @@ type Plan struct {
 	PreloadLibrary  string
 	Settings        map[string]string
 	RestartRequired bool
+	// Set marks the settings that came from --set rather than the extension's
+	// declaration, so a report can show where a value came from.
+	Set map[string]bool
 }
 
 // IsEmpty reports whether there is nothing to do.
@@ -45,7 +48,11 @@ func (p Plan) Describe() string {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		fmt.Fprintf(&b, "  %s = %s\n", k, quoteValue(p.Settings[k]))
+		fmt.Fprintf(&b, "  %s = %s", k, quoteValue(p.Settings[k]))
+		if p.Set[k] {
+			b.WriteString("  (--set)")
+		}
+		b.WriteString("\n")
 	}
 	return b.String()
 }

@@ -145,6 +145,27 @@ The declaration also travels **inside a bottle**, so a prebuilt install
 configures the server too — which is what makes "vanilla PostgreSQL to working
 demo" a couple of commands.
 
+### Overriding settings with `--set`
+
+Declared settings are defaults. Override one, or add one the extension does not
+declare, with `--set key=value` (repeatable; the value may contain commas). It
+works for source and `--bottle` installs, and the report shows the effective
+values:
+
+```
+$ pgx install --configure --bottle <url> --set pg_kafka.database=app --set work_mem=64MB
+pg_kafka needs PostgreSQL configuration:
+  shared_preload_libraries += pg_kafka
+  pg_kafka.database = 'app'  (--set)
+  work_mem = '64MB'  (--set)
+  note: work_mem is not a setting pg_kafka declares; setting it anyway.
+```
+
+`--set` values are written to the extension's own drop-in, so `pgx uninstall`
+removes them too. `shared_preload_libraries` cannot be set this way: it is
+merged, never overwritten (see below). Malformed input (`--set foo`, `--set =x`)
+is rejected before anything is installed.
+
 ### How it writes
 
 **Drop-in files, never postgresql.conf.** Changes go to

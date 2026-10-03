@@ -263,6 +263,15 @@ func TestQuoteValue(t *testing.T) {
 		"it's":       "'it''s'",
 		"/var/lib/x": "'/var/lib/x'",
 		"100MB":      "'100MB'",
+		// Not numbers: PostgreSQL's conf parser rejects these bare
+		// ("syntax error ... near token \".0\"") and the server will not start.
+		"0.0.0.0":   "'0.0.0.0'",
+		"127.0.0.1": "'127.0.0.1'",
+		"1.2.3":     "'1.2.3'",
+		"-":         "'-'",
+		".":         "'.'",
+		"1.":        "'1.'",
+		".5":        ".5",
 	} {
 		if got := quoteValue(in); got != want {
 			t.Errorf("quoteValue(%q) = %q, want %q", in, got, want)

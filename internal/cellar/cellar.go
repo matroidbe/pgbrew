@@ -111,6 +111,17 @@ func Add(entry Entry) error {
 		return err
 	}
 
+	// Already recorded — same version for the same PostgreSQL and build
+	// system — so there is nothing to write. Where it was installed from
+	// does not matter. Skipping the write lets a reinstall over an existing
+	// install run without write access to the extension directory.
+	for _, e := range c.Entries {
+		if e.Name == entry.Name && e.Version == entry.Version &&
+			e.PgVersion == entry.PgVersion && e.BuildSystem == entry.BuildSystem {
+			return nil
+		}
+	}
+
 	entry.InstalledAt = time.Now()
 
 	// Update existing or append new

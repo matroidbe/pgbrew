@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/matroidbe/pgbrew/internal/github"
 	"github.com/matroidbe/pgbrew/internal/sysdeps"
 )
 
@@ -484,7 +485,12 @@ func libraryPathVar() string {
 //
 // An explicit CARGO_NET_GIT_FETCH_WITH_CLI is left alone, including when it
 // says false — that is a deliberate choice and not ours to overrule.
+//
+// It also carries a GH_TOKEN / GITHUB_TOKEN through to those git processes
+// (github.WithAuth), so a token that let pgbrew clone a private repo also
+// lets cargo fetch that repo's private git dependencies.
 func withGitCLIFetch(env []string) []string {
+	env = github.WithAuth(env)
 	const key = "CARGO_NET_GIT_FETCH_WITH_CLI"
 	for _, entry := range env {
 		if strings.HasPrefix(entry, key+"=") {

@@ -2,6 +2,7 @@ package github
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -46,30 +47,55 @@ func ParseURL(url string) (repo string, subpath string, version string, err erro
 
 // Clone clones a GitHub repository to the specified directory.
 // If ref is provided (tag, branch, or commit), it checks out that ref.
+//
+// A private repository is cloned with the token from GH_TOKEN or GITHUB_TOKEN
+// when one is set (see WithAuth), and otherwise with whatever credentials git
+// already has.
 func Clone(repo string, dir string, ref string) error {
 	url := "https://" + repo + ".git"
+	env := WithAuth(os.Environ())
 
+	args := []string{"clone", url, dir}
 	if ref == "" {
-		// Simple shallow clone of default branch
-		cmd := exec.Command("git", "clone", "--depth", "1", url, dir)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("git clone failed: %s\n%s", err, string(output))
-		}
-	} else {
-		// Clone with specific ref - need full clone for tags/commits
-		cmd := exec.Command("git", "clone", url, dir)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("git clone failed: %s\n%s", err, string(output))
-		}
-
-		// Checkout the specific ref
-		cmd = exec.Command("git", "-C", dir, "checkout", ref)
-		output, err = cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("git checkout %s failed: %s\n%s", ref, err, string(output))
+		args = []string{"clone", "--depth", "1", url, dir}
+	}
+	if err := runGit(env, args...); err != nil {
+		return fmt.Errorf("git clone failed: %w%s", err, authHint(err))
+	}
+	if ref != "" {
+		if err := runGit(env, "-C", dir, "checkout", ref); err != nil {
+			return fmt.Errorf("git checkout %s failed: %w", ref, err)
 		}
 	}
 	return nil
+}
+
+func runGit(env []string, args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Env = append(env,
+		// Fail instead of prompting: pgbrew is often run where nobody can
+		// answer a username prompt, and a hung image build explains nothing.
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s\n%s", err, string(output))
+	}
+	return nil
+}
+
+// authHint explains the likely fix when a clone fails because the repository
+// is private (GitHub answers "not found" rather than "forbidden" for those).
+func authHint(err error) string {
+	msg := err.Error()
+	if !strings.Contains(msg, "could not read Username") &&
+		!strings.Contains(msg, "not found") &&
+		!strings.Contains(msg, "Authentication failed") {
+		return ""
+	}
+	if Token() != "" {
+		return "\nA token is set but was refused: check that it can read this repository."
+	}
+	return "\nIf the repository is private, set GH_TOKEN (or GITHUB_TOKEN) to a token that can read it,\n" +
+		"e.g. GH_TOKEN=$(gh auth token) pgx install ..."
 }

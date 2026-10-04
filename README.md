@@ -340,6 +340,34 @@ brew = ["opencascade"]
 Extensions that declare no manifest are unaffected — the check is a no-op for
 them.
 
+## Private Repositories
+
+`pgx install github.com/org/private-repo/...` uses whatever credentials git
+already has — a credential helper, an SSH agent, a keychain. Where there are
+none (an image build, a CI job), set `GH_TOKEN` or `GITHUB_TOKEN`:
+
+```bash
+GH_TOKEN=$(gh auth token) pgx install github.com/org/private-repo/ext@v1.2.0
+```
+
+The token reaches every git process pgbrew starts: its own clone **and**
+cargo's fetch of the workspace's git dependencies, so a private extension
+that depends on another private repo builds in one `pgx install`. It is sent
+as an HTTP header scoped to `https://github.com/` through git's
+`GIT_CONFIG_*` environment — never in a URL, on a command line or in the
+clone's `.git/config`, and never to any other host.
+
+In a container build, pass it as a secret so it stays out of the image:
+
+```dockerfile
+RUN --mount=type=secret,id=gh_token \
+    GH_TOKEN="$(cat /run/secrets/gh_token)" \
+    pgx install github.com/org/private-repo/ext@v1.2.0
+```
+
+Without a token a private clone fails at once with a hint, rather than
+waiting on a username prompt nobody can answer.
+
 ## Installing to System PostgreSQL
 
 System-installed PostgreSQL typically has extension directories owned by root. Use the `--sudo` flag to install with elevated permissions:

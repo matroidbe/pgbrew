@@ -1,6 +1,7 @@
 package pgconf
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -277,5 +278,103 @@ func TestLocateHonoursExplicitOverride(t *testing.T) {
 	}
 	if layout.ConfDir != filepath.Join(dir, ConfDirName) {
 		t.Errorf("ConfDir = %q", layout.ConfDir)
+	}
+}
+
+// maxWorkers reads the max_worker_processes pgbrew wrote, or 0 if none.
+func maxWorkers(t *testing.T, layout Layout) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(layout.ConfDir, PreloadFileName))
+	if err != nil {
+		return 0
+	}
+	value, ok := FindSetting(string(data), MaxWorkersSetting)
+	if !ok {
+		return 0
+	}
+	var n int
+	if _, err := fmt.Sscanf(value, "%d", &n); err != nil {
+		t.Fatalf("max_worker_processes = %q", value)
+	}
+	return n
+}
+
+// PostgreSQL's default of 8 worker slots is used up by three or four
+// extensions; the rest then fail to register their workers ("too many
+// background workers") and silently do nothing.
+func TestApplyRaisesMaxWorkerProcessesForDeclaredWorkers(t *testing.T) {
+	layout := testLayout(t, "")
+	plan := Plan{Extension: "pg_kafka", PreloadLibrary: "pg_kafka", BackgroundWorkers: 4}
+	if _, err := Apply(plan, layout, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := maxWorkers(t, layout), DefaultMaxWorkerProcesses+4; got != want {
+		t.Errorf("max_worker_processes = %d, want %d", got, want)
+	}
+}
+
+func TestApplyWorkerBudgetAccumulatesAcrossInstalls(t *testing.T) {
+	layout := testLayout(t, "")
+	for _, p := range []Plan{
+		{Extension: "pg_kafka", PreloadLibrary: "pg_kafka", BackgroundWorkers: 4},
+		{Extension: "pg_mqtt", PreloadLibrary: "pg_mqtt", BackgroundWorkers: 4},
+		{Extension: "pg_s3", PreloadLibrary: "pg_s3", BackgroundWorkers: 1},
+	} {
+		if _, err := Apply(p, layout, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := maxWorkers(t, layout), DefaultMaxWorkerProcesses+9; got != want {
+		t.Errorf("max_worker_processes = %d, want %d", got, want)
+	}
+}
+
+// Bottles built before background_workers existed declare nothing; budget
+// for them generously rather than leave their workers unregistered.
+func TestApplyUndeclaredWorkersUseTheDefault(t *testing.T) {
+	layout := testLayout(t, "")
+	if _, err := Apply(Plan{Extension: "pg_swarm", PreloadLibrary: "pg_swarm"}, layout, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := maxWorkers(t, layout), DefaultMaxWorkerProcesses+UndeclaredWorkers; got != want {
+		t.Errorf("max_worker_processes = %d, want %d", got, want)
+	}
+}
+
+// Libraries the operator preloads in postgresql.conf are theirs; the baseline
+// covers them, and pgbrew never lowers a value they chose.
+func TestApplyWorkerBudgetRespectsTheOperator(t *testing.T) {
+	layout := testLayout(t, "shared_preload_libraries = 'pg_cron'\n")
+	if _, err := Apply(Plan{Extension: "pg_kafka", PreloadLibrary: "pg_kafka", BackgroundWorkers: 4}, layout, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := maxWorkers(t, layout), DefaultMaxWorkerProcesses+4; got != want {
+		t.Errorf("pg_cron from postgresql.conf was counted: max_worker_processes = %d, want %d", got, want)
+	}
+
+	layout = testLayout(t, "max_worker_processes = 64\n")
+	if _, err := Apply(Plan{Extension: "pg_kafka", PreloadLibrary: "pg_kafka", BackgroundWorkers: 4}, layout, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := maxWorkers(t, layout); got != 64 {
+		t.Errorf("lowered the operator's max_worker_processes = 64 to %d", got)
+	}
+}
+
+func TestRemoveShrinksTheWorkerBudget(t *testing.T) {
+	layout := testLayout(t, "")
+	for _, p := range []Plan{
+		{Extension: "pg_kafka", PreloadLibrary: "pg_kafka", BackgroundWorkers: 4},
+		{Extension: "pg_mqtt", PreloadLibrary: "pg_mqtt", BackgroundWorkers: 4},
+	} {
+		if _, err := Apply(p, layout, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Remove("pg_mqtt", "pg_mqtt", layout, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := maxWorkers(t, layout), DefaultMaxWorkerProcesses+4; got != want {
+		t.Errorf("after removing pg_mqtt: max_worker_processes = %d, want %d", got, want)
 	}
 }

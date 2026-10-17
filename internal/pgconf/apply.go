@@ -19,6 +19,9 @@ type Plan struct {
 	PreloadLibrary  string
 	Settings        map[string]string
 	RestartRequired bool
+	// BackgroundWorkers is how many worker slots the preloaded library
+	// registers; 0 means undeclared and is budgeted as UndeclaredWorkers.
+	BackgroundWorkers int
 	// Set marks the settings that came from --set rather than the extension's
 	// declaration, so a report can show where a value came from.
 	Set map[string]bool
@@ -41,6 +44,11 @@ func (p Plan) Describe() string {
 	var b strings.Builder
 	if p.PreloadLibrary != "" {
 		fmt.Fprintf(&b, "  %s += %s\n", PreloadSetting, p.PreloadLibrary)
+		workers := p.BackgroundWorkers
+		if workers == 0 {
+			workers = UndeclaredWorkers
+		}
+		fmt.Fprintf(&b, "  %s += %d (background workers)\n", MaxWorkersSetting, workers)
 	}
 	keys := make([]string, 0, len(p.Settings))
 	for k := range p.Settings {
@@ -166,8 +174,15 @@ func Apply(plan Plan, layout Layout, useSudo bool) (Result, error) {
 		existing := currentPreloadLibraries(string(config), layout)
 		merged, _ := MergePreload(existing, plan.PreloadLibrary)
 
+		declared := recordedWorkers(layout)
+		if plan.BackgroundWorkers > 0 {
+			declared[plan.PreloadLibrary] = plan.BackgroundWorkers
+		} else {
+			delete(declared, plan.PreloadLibrary)
+		}
+
 		preloadPath := filepath.Join(layout.ConfDir, PreloadFileName)
-		if err := writeFile(preloadPath, RenderPreloadFile(merged), useSudo); err != nil {
+		if err := writeFile(preloadPath, renderPreload(string(config), merged, declared), useSudo); err != nil {
 			return result, err
 		}
 		result.Written = append(result.Written, preloadPath)
@@ -215,6 +230,51 @@ func currentPreloadLibraries(config string, layout Layout) []string {
 	return libs
 }
 
+// recordedWorkers returns the declared worker counts pgbrew recorded for the
+// libraries it preloads (empty if none).
+func recordedWorkers(layout Layout) map[string]int {
+	data, err := os.ReadFile(filepath.Join(layout.ConfDir, PreloadFileName))
+	if err != nil {
+		return map[string]int{}
+	}
+	return ParseWorkerRecord(string(data))
+}
+
+// renderPreload renders the preload file for libs together with the worker
+// budget they need, keeping only the counts of libraries still preloaded.
+func renderPreload(config string, libs []string, declared map[string]int) string {
+	var operatorLibs []string
+	if value, ok := FindSetting(config, PreloadSetting); ok {
+		operatorLibs = ParsePreloadList(value)
+	}
+	operatorMax := 0
+	if value, ok := FindSetting(config, MaxWorkersSetting); ok {
+		fmt.Sscanf(strings.Trim(value, `'"`), "%d", &operatorMax)
+	}
+
+	kept := map[string]int{}
+	for _, lib := range libs {
+		if n, ok := declared[lib]; ok {
+			kept[lib] = n
+		}
+	}
+
+	ours := false
+	theirs := map[string]bool{}
+	for _, lib := range operatorLibs {
+		theirs[lib] = true
+	}
+	for _, lib := range libs {
+		if !theirs[lib] {
+			ours = true
+		}
+	}
+	if !ours {
+		return RenderPreloadFile(libs, kept, 0)
+	}
+	return RenderPreloadFile(libs, kept, WorkerBudget(libs, operatorLibs, kept, operatorMax))
+}
+
 // Remove deletes an extension's drop-in and takes its library back out of the
 // merged preload list. Used by uninstall, so a removed extension does not leave
 // a dangling preload entry that prevents the server from starting.
@@ -253,8 +313,14 @@ func Remove(extension, preloadLibrary string, layout Layout, useSudo bool) (Resu
 		if err := removeFile(preloadPath, useSudo); err != nil {
 			return result, err
 		}
-	} else if err := writeFile(preloadPath, RenderPreloadFile(kept), useSudo); err != nil {
-		return result, err
+	} else {
+		// The worker budget shrinks with the list; an unreadable
+		// postgresql.conf just means nothing of the operator's to respect.
+		config, _ := os.ReadFile(layout.ConfigFile)
+		content := renderPreload(string(config), kept, ParseWorkerRecord(string(data)))
+		if err := writeFile(preloadPath, content, useSudo); err != nil {
+			return result, err
+		}
 	}
 
 	result.Written = append(result.Written, preloadPath)

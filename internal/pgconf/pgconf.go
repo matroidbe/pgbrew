@@ -202,8 +202,76 @@ func IncludeDirLine(dir string) string {
 	return fmt.Sprintf("\n# Added by pgbrew: read extension configuration drop-ins.\ninclude_dir = '%s'\n", dir)
 }
 
-// RenderPreloadFile renders the shared file holding the merged preload list.
-func RenderPreloadFile(libs []string) string {
+// MaxWorkersSetting is the GUC capping background worker slots.
+const MaxWorkersSetting = "max_worker_processes"
+
+// DefaultMaxWorkerProcesses is PostgreSQL's default worker budget. pgbrew
+// keeps it as headroom for parallel query and for libraries the operator
+// preloads themselves, and adds the preloaded extensions' workers on top.
+const DefaultMaxWorkerProcesses = 8
+
+// UndeclaredWorkers is budgeted for a preloaded extension that does not
+// declare background_workers (including bottles built before the field
+// existed). A spare slot costs a little shared memory; a missing one means a
+// worker that never starts.
+const UndeclaredWorkers = 8
+
+// workersMarker starts the line in the preload file recording each library's
+// declared worker count, so later installs and uninstalls can recompute the
+// budget.
+const workersMarker = "# pgbrew-workers:"
+
+// ParseWorkerRecord reads the declared worker counts recorded in a preload
+// file written by RenderPreloadFile.
+func ParseWorkerRecord(file string) map[string]int {
+	counts := map[string]int{}
+	for _, line := range strings.Split(file, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), workersMarker)
+		if !ok {
+			continue
+		}
+		for _, entry := range strings.Split(rest, ",") {
+			lib, n, ok := strings.Cut(strings.TrimSpace(entry), "=")
+			if !ok {
+				continue
+			}
+			var count int
+			if _, err := fmt.Sscanf(n, "%d", &count); err == nil && count >= 0 {
+				counts[strings.TrimSpace(lib)] = count
+			}
+		}
+	}
+	return counts
+}
+
+// WorkerBudget returns the max_worker_processes needed for libs.
+//
+// Libraries the operator preloads in postgresql.conf are covered by the
+// default headroom; every other library counts its declared workers, or
+// UndeclaredWorkers. The result never undercuts operatorMax, a value the
+// operator set themselves.
+func WorkerBudget(libs, operatorLibs []string, declared map[string]int, operatorMax int) int {
+	theirs := map[string]bool{}
+	for _, lib := range operatorLibs {
+		theirs[lib] = true
+	}
+	budget := DefaultMaxWorkerProcesses
+	for _, lib := range libs {
+		if theirs[lib] {
+			continue
+		}
+		if n, ok := declared[lib]; ok {
+			budget += n
+		} else {
+			budget += UndeclaredWorkers
+		}
+	}
+	return max(budget, operatorMax)
+}
+
+// RenderPreloadFile renders the shared file holding the merged preload list
+// and, when maxWorkers > 0, the worker budget that goes with it.
+func RenderPreloadFile(libs []string, declared map[string]int, maxWorkers int) string {
 	var b strings.Builder
 	b.WriteString("# Managed by pgbrew. Do not edit.\n")
 	b.WriteString("#\n")
@@ -211,6 +279,25 @@ func RenderPreloadFile(libs []string) string {
 	b.WriteString("# merged value in this one file rather than one file per extension.\n")
 	b.WriteString("# Entries found in postgresql.conf are preserved.\n")
 	fmt.Fprintf(&b, "%s = %s\n", PreloadSetting, FormatPreloadList(libs))
+	if maxWorkers > 0 {
+		b.WriteString("\n")
+		b.WriteString("# Room for the preloaded extensions' background workers on top of\n")
+		b.WriteString("# PostgreSQL's default 8; without it the extensions past the first few\n")
+		b.WriteString("# fail to register their workers and silently do nothing.\n")
+		names := make([]string, 0, len(declared))
+		for lib := range declared {
+			names = append(names, lib)
+		}
+		sort.Strings(names)
+		entries := make([]string, 0, len(names))
+		for _, lib := range names {
+			entries = append(entries, fmt.Sprintf("%s=%d", lib, declared[lib]))
+		}
+		if len(entries) > 0 {
+			fmt.Fprintf(&b, "%s %s\n", workersMarker, strings.Join(entries, ", "))
+		}
+		fmt.Fprintf(&b, "%s = %d\n", MaxWorkersSetting, maxWorkers)
+	}
 	return b.String()
 }
 

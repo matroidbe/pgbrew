@@ -8,7 +8,12 @@ Homebrew-inspired package manager for PostgreSQL extensions. Supports both **pgr
 curl -fsSL https://raw.githubusercontent.com/matroidbe/pgbrew/main/install.sh | bash
 ```
 
-Or with Go:
+This downloads the prebuilt `pgx` for your platform (macOS or Linux, arm64 or
+amd64) from the latest GitHub release, checks its sha256 against the release's
+checksum file, and installs it to `~/.local/bin`. No Go toolchain is needed.
+Set `PGX_VERSION=v0.2.0` to pin a release, or `INSTALL_DIR` to install elsewhere.
+
+Or build it with Go:
 ```bash
 go install github.com/matroidbe/pgbrew/cmd/pgx@latest
 ```
@@ -53,8 +58,9 @@ pgx uninstall pg_graphql
 # Install an extension's native library dependencies too
 pgx install --install-deps github.com/user/repo
 
-# Upgrade pgx itself
+# Upgrade pgx itself (downloads the latest release binary; or pass a tag)
 pgx upgrade
+pgx upgrade v0.2.0
 ```
 
 ## Bottles (prebuilt artifacts)
@@ -393,9 +399,9 @@ PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config pgx install --sudo github.com/pgv
 ## Requirements
 
 **For all extensions:**
-- Go 1.21+ (for building pgx)
 - PostgreSQL with development headers
 - Git
+- Go 1.24+, only when building pgx from source instead of using a release binary
 
 **For C extensions (PGXS):**
 - GCC or compatible C compiler
@@ -495,6 +501,15 @@ pgx completion zsh > ~/.zsh/completions/_pgx
 # Fish
 pgx completion fish > ~/.config/fish/completions/pgx.fish
 ```
+
+## Releasing
+
+Push a `vX.Y.Z` tag. The `release` workflow runs the tests, cross-compiles
+`pgx` for darwin-arm64, darwin-amd64, linux-amd64 and linux-arm64, and attaches
+`pgx-<tag>-<os>-<arch>.tar.gz` plus `pgx-<tag>-checksums.txt` to the release
+(creating it if needed). `install.sh` and `pgx upgrade` download those assets.
+To add binaries to a release that already exists, run the workflow by hand
+with that tag.
 
 ## License
 

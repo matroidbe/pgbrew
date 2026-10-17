@@ -1,0 +1,68 @@
+name: release
+
+# Builds pgx for every supported platform and attaches the archives to the
+# GitHub release for the tag. install.sh and `pgx upgrade` download these.
+#
+# Asset layout (one archive per platform, plus one checksum file):
+#   pgx-<tag>-<os>-<arch>.tar.gz   contains a single `pgx` binary
+#   pgx-<tag>-checksums.txt        sha256sum output for every archive
+#
+# Run it by pushing a v* tag, or by hand (workflow_dispatch) to attach
+# binaries to a release that already exists, such as v0.1.0.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach binaries to (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./...
+
+      # pgx is pure Go, so every target cross-compiles from one runner.
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            os="${target%/*}" arch="${target#*/}"
+            name="pgx-${TAG}-${os}-${arch}"
+            mkdir -p "build/$name"
+            GOOS="$os" GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X github.com/matroidbe/pgbrew/internal/cmd.Version=${TAG}" \
+              -o "build/$name/pgx" ./cmd/pgx
+            tar -C "build/$name" -czf "dist/$name.tar.gz" pgx
+          done
+          (cd dist && sha256sum *.tar.gz > "pgx-${TAG}-checksums.txt")
+          cat "dist/pgx-${TAG}-checksums.txt"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
+          fi
+          gh release upload "$TAG" dist/* --clobber

@@ -139,6 +139,7 @@ func runBottle(cmd *cobra.Command, args []string) error {
 			Library:                src.Postgres.Library,
 			Settings:               src.Postgres.Settings,
 			RestartRequired:        src.Postgres.RestartRequired,
+			BackgroundWorkers:      src.Postgres.BackgroundWorkers,
 		}
 	}
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/matroidbe/pgbrew/internal/bottle"
 	"github.com/matroidbe/pgbrew/internal/pgconf"
+	"github.com/matroidbe/pgbrew/internal/sysdeps"
 )
 
 // captureStdout runs fn and returns what it printed.
@@ -168,5 +169,22 @@ func TestHandlePostgresConfigWritesSetValues(t *testing.T) {
 	}
 	if strings.Contains(got, "postgres'") {
 		t.Errorf("declared default should have been overridden:\n%s", got)
+	}
+}
+
+// background_workers travels from the manifest and the bottle into the plan,
+// so --configure can size max_worker_processes.
+func TestPlansCarryDeclaredBackgroundWorkers(t *testing.T) {
+	fromBottle := planFromBottle(bottle.Manifest{
+		Name:     "pg_kafka",
+		Postgres: &bottle.PostgresConfig{SharedPreloadLibraries: true, BackgroundWorkers: 4},
+	})
+	if fromBottle.BackgroundWorkers != 4 {
+		t.Errorf("bottle plan: BackgroundWorkers = %d, want 4", fromBottle.BackgroundWorkers)
+	}
+
+	fromSource := planFromManifest("pg_mqtt", sysdeps.PostgresSection{SharedPreloadLibraries: true, BackgroundWorkers: 4})
+	if fromSource.BackgroundWorkers != 4 {
+		t.Errorf("source plan: BackgroundWorkers = %d, want 4", fromSource.BackgroundWorkers)
 	}
 }

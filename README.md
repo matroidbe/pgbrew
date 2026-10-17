@@ -119,6 +119,7 @@ An extension declares what it needs in its manifest:
 [postgresql]
 shared_preload_libraries = true    # this extension must be preloaded
 restart_required = false           # implied by the above
+background_workers = 4             # worker slots it registers (see below)
 
 [postgresql.settings]
 "pg_kafka.port" = "9092"
@@ -130,6 +131,7 @@ restart_required = false           # implied by the above
 ```
 pg_kafka needs PostgreSQL configuration:
   shared_preload_libraries += pg_kafka
+  max_worker_processes += 4 (background workers)
   pg_kafka.advertised_host = 'localhost'
   pg_kafka.port = 9092
 
@@ -195,6 +197,15 @@ silently disable whatever was already there. pgbrew reads the existing value
 de-duplicates. Existing entries keep their position, since load order can
 matter. `pgx uninstall` takes the entry back out — a stale name in that list
 stops the server from starting.
+
+**`max_worker_processes` grows with the preloaded extensions.** PostgreSQL's
+default of 8 worker slots runs out after three or four extensions, and the
+rest then fail to register their workers ("too many background workers") and
+silently do nothing. The preload drop-in therefore also sets
+`max_worker_processes` to 8 (headroom for parallel query and for libraries you
+preload yourself) plus each pgbrew-preloaded extension's `background_workers`,
+or 8 for one that does not declare it. A higher value you set in
+`postgresql.conf` is kept, and `pgx uninstall` shrinks the budget again.
 
 **Nothing is restarted for you.** pgbrew prints the command. Restarting a
 database is an outage, and that is not a package manager's call.

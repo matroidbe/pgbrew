@@ -201,7 +201,7 @@ func TestHasIncludeDir(t *testing.T) {
 }
 
 func TestRenderPreloadFile(t *testing.T) {
-	out := RenderPreloadFile([]string{"pg_cron", "pg_kafka"})
+	out := RenderPreloadFile([]string{"pg_cron", "pg_kafka"}, nil, 0)
 	if !strings.Contains(out, "shared_preload_libraries = 'pg_cron, pg_kafka'") {
 		t.Errorf("rendered file missing the setting:\n%s", out)
 	}

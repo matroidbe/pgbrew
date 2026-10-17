@@ -57,6 +57,11 @@ type PostgresSection struct {
 	// RestartRequired forces a restart even without a preload requirement, for
 	// settings that cannot be applied by a reload.
 	RestartRequired bool `toml:"restart_required"`
+
+	// BackgroundWorkers is how many background worker slots the preloaded
+	// library registers. --configure raises max_worker_processes to fit every
+	// preloaded extension; undeclared counts as pgconf.UndeclaredWorkers.
+	BackgroundWorkers int `toml:"background_workers"`
 }
 
 // IsZero reports whether the extension declares no PostgreSQL configuration.

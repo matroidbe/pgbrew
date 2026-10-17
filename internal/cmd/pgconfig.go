@@ -24,10 +24,11 @@ var (
 // planFromManifest builds a configuration plan from a source manifest.
 func planFromManifest(extension string, section sysdeps.PostgresSection) pgconf.Plan {
 	return pgconf.Plan{
-		Extension:       extension,
-		PreloadLibrary:  section.PreloadName(extension),
-		Settings:        section.Settings,
-		RestartRequired: section.RestartRequired,
+		Extension:         extension,
+		PreloadLibrary:    section.PreloadName(extension),
+		Settings:          section.Settings,
+		RestartRequired:   section.RestartRequired,
+		BackgroundWorkers: section.BackgroundWorkers,
 	}
 }
 
@@ -45,10 +46,11 @@ func planFromBottle(m bottle.Manifest) pgconf.Plan {
 		}
 	}
 	return pgconf.Plan{
-		Extension:       m.Name,
-		PreloadLibrary:  library,
-		Settings:        m.Postgres.Settings,
-		RestartRequired: m.Postgres.RestartRequired,
+		Extension:         m.Name,
+		PreloadLibrary:    library,
+		Settings:          m.Postgres.Settings,
+		RestartRequired:   m.Postgres.RestartRequired,
+		BackgroundWorkers: m.Postgres.BackgroundWorkers,
 	}
 }
 

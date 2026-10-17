@@ -78,6 +78,7 @@ type PostgresConfig struct {
 	Library                string            `json:"library,omitempty"`
 	Settings               map[string]string `json:"settings,omitempty"`
 	RestartRequired        bool              `json:"restart_required,omitempty"`
+	BackgroundWorkers      int               `json:"background_workers,omitempty"`
 }
 
 // Filename is the conventional bottle filename for a manifest.

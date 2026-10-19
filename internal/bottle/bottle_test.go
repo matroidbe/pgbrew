@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -514,5 +515,59 @@ func TestInstallReplacesDifferingFiles(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(so); string(got) != "ELF-ish bytes" {
 		t.Errorf("%s = %q, not replaced", so, got)
+	}
+}
+
+// A running server has the old library mapped; an upgrade must give the new
+// one its own inode instead of rewriting the pages under it.
+func TestInstallNeverWritesIntoALoadedLibrary(t *testing.T) {
+	data := createBottle(t, sampleManifest(), sampleFiles())
+	b, err := Open(bytes.NewReader(data), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	libDir, shareDir := filepath.Join(root, "lib"), filepath.Join(root, "share")
+	so := filepath.Join(libDir, "pg_solid.so")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(so, []byte("loaded build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := os.Open(so) // stands in for the server's mapping
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loaded.Close()
+
+	if _, _, err := b.Install(libDir, shareDir, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, _ := io.ReadAll(loaded); string(got) != "loaded build" {
+		t.Errorf("the loaded file now reads %q: install wrote into it", got)
+	}
+	if got, _ := os.ReadFile(so); string(got) != "ELF-ish bytes" {
+		t.Errorf("%s = %q, not replaced", so, got)
+	}
+	if info, _ := os.Stat(so); info.Mode().Perm() != 0o755 {
+		t.Errorf("%s mode = %v, want 0755", so, info.Mode().Perm())
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(libDir, ".*pgbrew-*")); len(leftovers) > 0 {
+		t.Errorf("temp files left behind: %v", leftovers)
+	}
+}
+
+func TestControlVersion(t *testing.T) {
+	files := map[string][]byte{
+		"share/extension/timescaledb.control": []byte("comment = 'x'\ndefault_version = '2.30.2'\nmodule_pathname = '$libdir/timescaledb-2.30.2'\n"),
+		"lib/timescaledb-2.30.2.so":           []byte("lib"),
+	}
+	if got := ControlVersion("timescaledb", files); got != "2.30.2" {
+		t.Errorf("ControlVersion = %q, want 2.30.2", got)
+	}
+	if got := ControlVersion("other", files); got != "" {
+		t.Errorf("ControlVersion of a missing control file = %q, want empty", got)
 	}
 }

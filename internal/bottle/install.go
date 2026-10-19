@@ -56,7 +56,27 @@ func writeFile(dest string, content []byte, mode os.FileMode, useSudo bool) erro
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}
-		return os.WriteFile(dest, content, mode)
+		// Never write into the existing file: a running server has the old
+		// library mapped, and changing those pages under it crashes backends
+		// (on macOS the kernel kills a process whose signed pages change).
+		// A sibling file renamed over dest gets a new inode, so the old one
+		// lives on for whoever still has it loaded.
+		tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".pgbrew-*")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(tmp.Name())
+		if _, err := tmp.Write(content); err != nil {
+			tmp.Close()
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			return err
+		}
+		if err := os.Chmod(tmp.Name(), mode); err != nil {
+			return err
+		}
+		return os.Rename(tmp.Name(), dest)
 	}
 
 	// Stage in a temp file this process owns, then move it into place with

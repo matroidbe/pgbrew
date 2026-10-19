@@ -596,3 +596,45 @@ func TestMissingRequirements(t *testing.T) {
 		t.Errorf("MissingRequirements = %+v, want only the missing one", missing)
 	}
 }
+
+// plpython3u's control file loads '$libdir/plpython3': a library whose name
+// is not the extension's must still be bottled.
+func TestModuleLibrariesFollowsModulePathname(t *testing.T) {
+	staged := map[string][]byte{
+		"share/extension/plpython3u.control":  []byte("comment = 'PL/Python3U'\ndefault_version = '1.0'\nmodule_pathname = '$libdir/plpython3'\n"),
+		"share/extension/plpython3u--1.0.sql": []byte("sql"),
+		"lib/plpython3.dylib":                 []byte("code"),
+		"lib/plperl.dylib":                    []byte("other"),
+		"lib/bitcode/plpython3/plpy_main.bc":  []byte("bc"),
+	}
+	files := FilesFor("plpython3u", staged)
+	if _, ok := files["lib/plpython3.dylib"]; ok {
+		t.Fatal("FilesFor already selects plpython3.dylib; the test no longer covers ModuleLibraries")
+	}
+	ModuleLibraries("plpython3u", files, staged)
+	if _, ok := files["lib/plpython3.dylib"]; !ok {
+		t.Error("the library module_pathname names was not added")
+	}
+	for _, other := range []string{"lib/plperl.dylib", "lib/bitcode/plpython3/plpy_main.bc"} {
+		if _, ok := files[other]; ok {
+			t.Errorf("%s was added", other)
+		}
+	}
+}
+
+// A pgrx dylib lists its own install name, a path on the build machine, as the
+// first entry of `otool -L`. That is not a requirement.
+func TestParseOtoolLSkipsTheLibrarysOwnInstallName(t *testing.T) {
+	out := `pg_ml.dylib:
+	/Users/dev/pg_extensions/target/release/deps/libpg_ml.dylib (compatibility version 0.0.0, current version 0.0.0)
+	/opt/homebrew/opt/python@3.11/Frameworks/Python.framework/Versions/3.11/Python (compatibility version 3.11.0, current version 3.11.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)
+	@rpath/libfoo.dylib (compatibility version 1.0.0, current version 1.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)
+`
+	got := parseOtoolL(out, "/Users/dev/pg_extensions/target/release/deps/libpg_ml.dylib")
+	want := []string{"/opt/homebrew/opt/python@3.11/Frameworks/Python.framework/Versions/3.11/Python"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("parseOtoolL = %v, want %v", got, want)
+	}
+}

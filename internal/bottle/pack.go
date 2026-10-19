@@ -130,16 +130,38 @@ func BelongsTo(extension, archivePath string) bool {
 // the one the build generated, so it holds a real version even when the
 // source only had a template.
 func ControlVersion(extension string, files map[string][]byte) string {
-	content, ok := files[path.Join(ShareDir, "extension", extension+".control")]
-	if !ok {
-		return ""
+	return controlValue(files[path.Join(ShareDir, "extension", extension+".control")], "default_version")
+}
+
+// ModuleLibraries adds the libraries an extension's control file names in
+// module_pathname but whose names do not match the extension's: plpython3u
+// loads '$libdir/plpython3'. FilesFor selects by name, so without this the
+// bottle would ship the SQL and none of the code. staged holds every file of
+// the staged install; files is the selection so far, which is extended.
+func ModuleLibraries(extension string, files, staged map[string][]byte) {
+	module := controlValue(files[path.Join(ShareDir, "extension", extension+".control")], "module_pathname")
+	module = strings.TrimPrefix(module, "$libdir/")
+	if module == "" || strings.Contains(module, "/") {
+		return
 	}
-	for _, line := range strings.Split(string(content), "\n") {
-		key, value, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(key) != "default_version" {
+	for name, content := range staged {
+		if !strings.HasPrefix(name, LibDir+"/") || strings.Count(name, "/") != 1 {
 			continue
 		}
-		return strings.Trim(strings.TrimSpace(value), `'"`)
+		base := path.Base(name)
+		if strings.TrimSuffix(base, path.Ext(base)) == module {
+			files[name] = content
+		}
+	}
+}
+
+// controlValue returns one key's value from a control file, unquoted.
+func controlValue(content []byte, key string) string {
+	for _, line := range strings.Split(string(content), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(k) == key {
+			return strings.Trim(strings.TrimSpace(v), `'"`)
+		}
 	}
 	return ""
 }

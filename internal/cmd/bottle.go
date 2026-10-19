@@ -124,6 +124,7 @@ func runBottle(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	files := bottle.FilesFor(extName, staged)
+	bottle.ModuleLibraries(extName, files, staged)
 	if len(files) == 0 {
 		return fmt.Errorf("nothing belonging to %s was found in the staged tree at %s", extName, stageRoot)
 	}

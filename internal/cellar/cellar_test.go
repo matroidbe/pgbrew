@@ -70,3 +70,25 @@ func TestAddRecordsANewVersion(t *testing.T) {
 		t.Errorf("entries = %+v, want one pg_kafka 0.3.1", entries)
 	}
 }
+
+// Replacing a bottle with a source build of the same version is a different
+// install: `pgx update` rebuilds from the recorded source.
+func TestAddRecordsASwitchFromBottleToSource(t *testing.T) {
+	fakeShareDir(t)
+	bottle := Entry{Name: "pg_kafka", Version: "0.3.1", Source: "/bottles/pg_kafka.tar.gz", PgVersion: "18", BuildSystem: "pgxs"}
+	if err := Add(bottle); err != nil {
+		t.Fatal(err)
+	}
+	source := bottle
+	source.Source = "github.com/matroidbe/pg_extensions/extensions/pg_kafka@v0.7.2"
+	if err := Add(source); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Get("pg_kafka")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Source != source.Source {
+		t.Errorf("recorded source = %q, want %q", got.Source, source.Source)
+	}
+}

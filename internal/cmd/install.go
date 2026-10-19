@@ -90,13 +90,18 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		if len(buildVars) > 0 {
 			return fmt.Errorf("--build-var sets a build variable; a bottle is already built")
 		}
-		return installFromBottle(bottleSource)
+		return installFromBottle(bottleSource, "")
 	}
 
 	if len(args) != 1 {
 		return fmt.Errorf("accepts 1 arg(s), received %d", len(args))
 	}
-	source := args[0]
+	return installFromSource(args[0])
+}
+
+// installFromSource builds and installs an extension from a GitHub source or
+// a local directory, with the --features and --build-var currently set.
+func installFromSource(source string) error {
 
 	var extDir string
 	var cleanupDir string
@@ -223,6 +228,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		Source:      source,
 		PgVersion:   pgVersion,
 		BuildSystem: b.Name(),
+		Features:    features,
+		BuildVars:   buildVars,
 	}
 	if err := cellar.Add(entry); err != nil {
 		return fmt.Errorf("failed to record installation: %w", err)

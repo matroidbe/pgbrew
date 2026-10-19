@@ -54,6 +54,9 @@ pgx list --all
 # Show extension info
 pgx info pg_graphql
 
+# Update an extension, then the databases that use it (see "Updating")
+pgx update vector@v0.8.8 --apply
+
 # Uninstall extension (dry run first)
 pgx uninstall --dry-run pg_graphql
 pgx uninstall pg_graphql
@@ -387,6 +390,37 @@ RUN --mount=type=secret,id=gh_token \
 
 Without a token a private clone fails at once with a hint, rather than
 waiting on a username prompt nobody can answer.
+
+## Updating
+
+`pgx update <ext>` reinstalls an extension from where pgx recorded installing
+it, then checks every database that has it created:
+
+```bash
+pgx update pg_cron                          # rebuild the recorded source (same --features / --build-var)
+pgx update vector@v0.8.8                    # a GitHub source, at another tag or branch
+pgx update pg_kafka --bottle <file-or-url>  # a newer bottle
+pgx update vector --apply                   # ...and ALTER EXTENSION ... UPDATE in each database
+pgx update pg_cron --databases-only         # only the ALTER step
+```
+
+- **The source.** A GitHub install pinned to a tag needs the new one named
+  (`@v0.8.8`): rebuilding the pin would build the same version, and "the latest
+  tag" would be a version nobody chose. A bottle names one version, so a bottle
+  install is updated with `--bottle`. A local directory is rebuilt as it is now.
+- **The files.** Each file is replaced with a rename, never written into, so a
+  running server keeps the library it loaded. New sessions load the new one; a
+  preloaded library needs a restart.
+- **The databases.** pgx lists every database (templates included: a stale
+  `template1` hands the old version to each new database) whose version is
+  behind, and checks `pg_extension_update_paths` for an upgrade-script path.
+  `--apply` runs `ALTER EXTENSION ... UPDATE TO` where there is one. For a
+  **preloaded** library it stops and asks for a restart first, because the
+  server still runs the old code the upgrade scripts would call. Where there is
+  **no path**, it says so and leaves the database alone: the only way forward is
+  `DROP EXTENSION ... CASCADE`, which drops everything that depends on it.
+
+`pgx upgrade` is a different command: it updates pgx itself.
 
 ## Build variables
 

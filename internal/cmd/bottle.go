@@ -192,10 +192,14 @@ func runBottle(cmd *cobra.Command, args []string) error {
 }
 
 // installFromBottle installs a prebuilt bottle instead of building from source.
-func installFromBottle(source string) error {
+// A non-empty wantName refuses a bottle of any other extension.
+func installFromBottle(source, wantName string) error {
 	b, err := loadBottle(source)
 	if err != nil {
 		return err
+	}
+	if wantName != "" && b.Manifest.Name != wantName {
+		return fmt.Errorf("%s is a bottle of %s, not %s", source, b.Manifest.Name, wantName)
 	}
 
 	pgConfig := getPgConfigPath()

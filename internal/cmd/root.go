@@ -20,6 +20,7 @@ Install extensions directly from GitHub repositories:
 Manage installed extensions:
   pgx list
   pgx info <extension>
+  pgx update <extension>
   pgx uninstall <extension>
 
 Check your system:

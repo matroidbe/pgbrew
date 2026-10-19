@@ -94,19 +94,20 @@ func collect(dir, prefix string, files map[string][]byte) error {
 func FilesFor(extension string, files map[string][]byte) map[string][]byte {
 	out := map[string][]byte{}
 	for name, content := range files {
-		if belongsTo(extension, name) {
+		if BelongsTo(extension, name) {
 			out[name] = content
 		}
 	}
 	return out
 }
 
-// belongsTo reports whether an archive path is part of the named extension.
+// BelongsTo reports whether a file (an archive path, or a file name in an
+// installed tree) is part of the named extension.
 //
 // PostgreSQL's own naming rules make this decidable: the library is
 // <name>.so/.dylib, the control file is <name>.control, and SQL scripts are
 // <name>--<version>.sql or <name>--<from>--<to>.sql.
-func belongsTo(extension, archivePath string) bool {
+func BelongsTo(extension, archivePath string) bool {
 	base := path.Base(archivePath)
 	stem := strings.TrimSuffix(base, path.Ext(base))
 

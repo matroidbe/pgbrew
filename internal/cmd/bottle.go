@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -242,7 +243,9 @@ func installFromBottle(source, wantName string) error {
 		Source:      source,
 		PgVersion:   pgMajor,
 		BuildSystem: b.Manifest.BuildSystem,
+		Files:       append(append([]string{}, written...), unchanged...),
 	}
+	sort.Strings(entry.Files)
 	if err := cellar.Add(entry); err != nil {
 		return fmt.Errorf("failed to record installation: %w", err)
 	}

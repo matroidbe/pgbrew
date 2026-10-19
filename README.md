@@ -1,6 +1,6 @@
 # pgbrew
 
-Homebrew-inspired package manager for PostgreSQL extensions. Supports both **pgrx** (Rust) and **PGXS** (C) extensions.
+Homebrew-inspired package manager for PostgreSQL extensions. Supports **pgrx** (Rust), **PGXS** (C) and **CMake** (C) extensions.
 
 ## Installation
 
@@ -41,6 +41,9 @@ pgx install ./my_extension
 
 # Install to system PostgreSQL (requires sudo)
 pgx install --sudo github.com/pgvector/pgvector
+
+# Override a build-system variable (repeatable; see "Build variables")
+pgx install --build-var BISON=/opt/homebrew/opt/bison/bin/bison ./age
 
 # List installed extensions
 pgx list
@@ -385,6 +388,30 @@ RUN --mount=type=secret,id=gh_token \
 Without a token a private clone fails at once with a hint, rather than
 waiting on a username prompt nobody can answer.
 
+## Build variables
+
+`--build-var KEY=VALUE` (on `install` and `bottle`, repeatable) hands a
+variable to the extension's build system: a make command-line variable for
+PGXS, a `-DKEY=VALUE` cache entry for CMake. pgrx builds refuse it; use
+`--features`.
+
+A make command-line variable overrides what the Makefiles assign, which an
+environment variable cannot. That is what an extension needs when PGXS itself
+names the wrong tool. Homebrew's PostgreSQL hard-codes `BISON = /usr/bin/bison`
+(Apple's bison 2.3), so Apache AGE builds on macOS only with:
+
+```bash
+pgx bottle ./age --build-var BISON=/opt/homebrew/opt/bison/bin/bison \
+  --build-var BISONFLAGS=--defines=src/include/parser/cypher_gram_def.h
+```
+
+And TimescaleDB, a CMake project:
+
+```bash
+pgx bottle ./timescaledb --build-var REGRESS_CHECKS=OFF --build-var TAP_CHECKS=OFF \
+  --build-var WARNINGS_AS_ERRORS=OFF --build-var OPENSSL_ROOT_DIR=$(brew --prefix openssl)
+```
+
 ## Installing to System PostgreSQL
 
 System-installed PostgreSQL typically has extension directories owned by root. Use the `--sudo` flag to install with elevated permissions:
@@ -417,6 +444,9 @@ PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config pgx install --sudo github.com/pgv
 **For C extensions (PGXS):**
 - GCC or compatible C compiler
 - Make
+
+**For C extensions (CMake):**
+- A C compiler and CMake
 
 **For Rust extensions (pgrx):**
 - Rust toolchain
@@ -465,6 +495,8 @@ the whole pass.
 2. Auto-detects extension type:
    - **pgrx (Rust)**: `Cargo.toml` with pgrx dependency
    - **PGXS (C)**: `Makefile` with PGXS + `.control` file
+   - **CMake (C)**: `CMakeLists.txt` that uses `pg_config` + a `.control` or
+     `.control.in` file. Configured into `build-pgx/` in the source tree
 3. For pgrx: Automatically installs the correct `cargo-pgrx` version
 4. Builds and installs the extension
 5. Tracks installation in `~/.pgbrew/installed.json`
@@ -488,6 +520,13 @@ This means you can install extensions built with different pgrx versions without
 | [pgvector](https://github.com/pgvector/pgvector) | Vector similarity search | `pgx install github.com/pgvector/pgvector` |
 | [pg_cron](https://github.com/citusdata/pg_cron) | Cron-based job scheduler | `pgx install github.com/citusdata/pg_cron` |
 | [pg_partman](https://github.com/pgpartman/pg_partman) | Partition management | `pgx install github.com/pgpartman/pg_partman` |
+| [Apache AGE](https://github.com/apache/age) | Graph database (openCypher) | `pgx install github.com/apache/age@PG18/v1.8.0-rc0` (macOS: add the bison `--build-var`s above) |
+
+### C Extensions (CMake)
+
+| Extension | Description | Install Command |
+|-----------|-------------|-----------------|
+| [TimescaleDB](https://github.com/timescale/timescaledb) | Time-series | `pgx install github.com/timescale/timescaledb@2.30.2 --build-var REGRESS_CHECKS=OFF --build-var TAP_CHECKS=OFF` |
 
 ### Rust Extensions (pgrx)
 

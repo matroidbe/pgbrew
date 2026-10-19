@@ -15,10 +15,6 @@ import (
 // PgxsBuilder implements the Builder interface for C extensions using PGXS Makefiles.
 type PgxsBuilder struct{}
 
-func init() {
-	Register(&PgxsBuilder{})
-}
-
 func (b *PgxsBuilder) Name() string {
 	return "pgxs"
 }
@@ -112,10 +108,10 @@ func (b *PgxsBuilder) Install(dir string, opts InstallOptions) error {
 	// Build make arguments
 	// Override CC to use the system's default gcc, since PostgreSQL's pg_config
 	// may reference a specific version (e.g., gcc-12) that isn't installed
-	makeArgs := []string{
+	makeArgs := append([]string{
 		"PG_CONFIG=" + pgConfig,
 		"CC=gcc",
-	}
+	}, opts.BuildVars...)
 
 	// Environment for the build, including the locations of any system
 	// dependencies pgbrew discovered.
@@ -207,7 +203,7 @@ func (b *PgxsBuilder) Package(dir string, opts InstallOptions) (string, error) {
 		return "", err
 	}
 
-	makeArgs := []string{"PG_CONFIG=" + pgConfig, "CC=gcc"}
+	makeArgs := append([]string{"PG_CONFIG=" + pgConfig, "CC=gcc"}, opts.BuildVars...)
 	buildEnv := sysdeps.ApplyEnv(os.Environ(), opts.Env)
 
 	makeCmd := exec.Command("make", makeArgs...)

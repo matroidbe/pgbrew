@@ -2,6 +2,7 @@ package builder
 
 import (
 	"fmt"
+	"strings"
 )
 
 // InstallOptions contains options for the Install method.
@@ -15,6 +16,12 @@ type InstallOptions struct {
 	// an extension's build script finds a library installed in a Homebrew or
 	// otherwise non-standard prefix.
 	Env []string
+
+	// BuildVars are KEY=VALUE pairs the user handed to the build system itself:
+	// make command-line variables for PGXS, -D cache entries for CMake. Unlike
+	// Env they override what the build files assign, which is the only way to
+	// replace a path PGXS hard-codes (BISON = /usr/bin/bison).
+	BuildVars []string
 }
 
 // Builder interface defines operations for building PostgreSQL extensions.
@@ -43,13 +50,11 @@ type Builder interface {
 	NeedsSharedPreload(dir string) bool
 }
 
-// registeredBuilders holds all available builders in priority order
-var registeredBuilders []Builder
-
-// Register adds a builder to the registry
-func Register(b Builder) {
-	registeredBuilders = append(registeredBuilders, b)
-}
+// registeredBuilders holds all available builders in priority order. The
+// order is explicit rather than left to init(), which runs in file-name order:
+// a project can carry more than one build system (a PGXS Makefile beside a
+// CMakeLists.txt), and the more specific one has to win.
+var registeredBuilders = []Builder{&PgrxBuilder{}, &PgxsBuilder{}, &CMakeBuilder{}}
 
 // DetectBuilder finds the appropriate builder for the given directory
 func DetectBuilder(dir string) (Builder, error) {
@@ -68,4 +73,34 @@ func ListBuilders() []string {
 		names[i] = b.Name()
 	}
 	return names
+}
+
+// ValidateBuildVars checks each --build-var is KEY=VALUE with a name both make
+// and CMake accept, so a typo fails before anything is cloned or built.
+func ValidateBuildVars(vars []string) error {
+	for _, v := range vars {
+		key, _, ok := strings.Cut(v, "=")
+		if !ok {
+			return fmt.Errorf("%q: expected KEY=VALUE", v)
+		}
+		if !validBuildVarName(key) {
+			return fmt.Errorf("%q: invalid variable name %q", v, key)
+		}
+	}
+	return nil
+}
+
+func validBuildVarName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_', r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }

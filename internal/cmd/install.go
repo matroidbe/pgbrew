@@ -21,6 +21,12 @@ import (
 var useSudo bool
 var features []string
 
+// buildVars are handed to the build system: make variables for PGXS, -D cache
+// entries for CMake.
+var buildVars []string
+
+const buildVarHelp = "Set a build-system variable, KEY=VALUE (repeatable): a make variable for PGXS, -DKEY=VALUE for CMake"
+
 var installCmd = &cobra.Command{
 	Use:   "install <source>",
 	Short: "Install a PostgreSQL extension",
@@ -29,6 +35,7 @@ var installCmd = &cobra.Command{
 Supported extension types:
   - pgrx (Rust): Projects with Cargo.toml containing pgrx dependency
   - pgxs (C):    Projects with Makefile using PGXS and a .control file
+  - cmake (C):   Projects with a CMakeLists.txt using pg_config and a .control(.in) file
 
 Examples:
   pgx install github.com/pgvector/pgvector
@@ -39,6 +46,7 @@ Examples:
   pgx install /path/to/extension
   pgx install --sudo github.com/pgvector/pgvector  # Install with sudo for system PostgreSQL
   pgx install --features my_feature ./my_ext       # Enable additional Cargo features (pgrx)
+  pgx install --build-var BISON=/opt/homebrew/opt/bison/bin/bison ./age   # Override a make variable (PGXS)
   pgx install --bottle pg_solid-0.2.0-pg16-linux-amd64.tar.gz   # Install a prebuilt artifact
   pgx install --bottle https://example.com/bottles/pg_solid-0.2.0-pg16-linux-amd64.tar.gz
   pgx install --configure --set pg_kafka.database=app --bottle <url>  # Override a declared setting`,
@@ -52,6 +60,7 @@ func init() {
 	installCmd.Flags().StringVar(&bottleSource, "bottle", "", "Install from a prebuilt bottle (file path or http(s) URL) instead of building")
 	installCmd.Flags().BoolVar(&useSudo, "sudo", false, "Use sudo for installation (needed for system PostgreSQL)")
 	installCmd.Flags().StringSliceVar(&features, "features", nil, "Additional Cargo features to enable (pgrx only, comma-separated)")
+	installCmd.Flags().StringArrayVar(&buildVars, "build-var", nil, buildVarHelp)
 	installCmd.Flags().BoolVar(&installDeps, "install-deps", false, "Install missing system dependencies with the platform package manager")
 	installCmd.Flags().StringVar(&depsVia, "deps-via", "", depsViaHelp)
 	installCmd.Flags().BoolVar(&skipDepChecks, "skip-dep-check", false, "Skip the system dependency check")
@@ -68,12 +77,18 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--set: %w", err)
 	}
 	setOverrides = overrides
+	if err := builder.ValidateBuildVars(buildVars); err != nil {
+		return fmt.Errorf("--build-var: %w", err)
+	}
 
 	// A bottle is a prebuilt artifact: no source, no toolchain, no build. It
 	// carries its own identity, so no source argument is needed.
 	if bottleSource != "" {
 		if len(args) > 0 {
 			return fmt.Errorf("--bottle installs a prebuilt artifact; do not also pass a source")
+		}
+		if len(buildVars) > 0 {
+			return fmt.Errorf("--build-var sets a build variable; a bottle is already built")
 		}
 		return installFromBottle(bottleSource)
 	}
@@ -177,9 +192,10 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	// Build and install
 	pgConfig := getPgConfigPath()
 	opts := builder.InstallOptions{
-		PgConfig: pgConfig,
-		UseSudo:  useSudo,
-		Features: features,
+		PgConfig:  pgConfig,
+		UseSudo:   useSudo,
+		Features:  features,
+		BuildVars: buildVars,
 		// Declared dependencies come last so an extension's own manifest wins
 		// over pgbrew's guess at where a pinned tool should point.
 		Env: append(toolchainEnv, depEnv...),

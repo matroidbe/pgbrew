@@ -43,6 +43,7 @@ and installed with:
 func init() {
 	bottleCmd.Flags().StringVarP(&bottleOutDir, "out-dir", "o", ".", "Directory to write the bottle into")
 	bottleCmd.Flags().StringSliceVar(&features, "features", nil, "Additional Cargo features to enable (pgrx only)")
+	bottleCmd.Flags().StringArrayVar(&buildVars, "build-var", nil, buildVarHelp)
 	bottleCmd.Flags().BoolVar(&installDeps, "install-deps", false, "Install missing system dependencies")
 	bottleCmd.Flags().StringVar(&depsVia, "deps-via", "", depsViaHelp)
 	bottleCmd.Flags().BoolVar(&skipDepChecks, "skip-dep-check", false, "Skip the system dependency check")
@@ -50,6 +51,9 @@ func init() {
 }
 
 func runBottle(cmd *cobra.Command, args []string) error {
+	if err := builder.ValidateBuildVars(buildVars); err != nil {
+		return fmt.Errorf("--build-var: %w", err)
+	}
 	extDir, err := filepath.Abs(args[0])
 	if err != nil {
 		return err
@@ -95,9 +99,10 @@ func runBottle(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Building %s %s for pg%s...\n", extName, version, pgMajor)
 	stageRoot, err := b.Package(extDir, builder.InstallOptions{
-		PgConfig: pgConfig,
-		Features: features,
-		Env:      append(toolchainEnv, depEnv...),
+		PgConfig:  pgConfig,
+		Features:  features,
+		BuildVars: buildVars,
+		Env:       append(toolchainEnv, depEnv...),
 	})
 	if err != nil {
 		return err
@@ -119,6 +124,13 @@ func runBottle(cmd *cobra.Command, args []string) error {
 	files := bottle.FilesFor(extName, staged)
 	if len(files) == 0 {
 		return fmt.Errorf("nothing belonging to %s was found in the staged tree at %s", extName, stageRoot)
+	}
+	// A version the source only had as a template (a CMake '@...@' placeholder)
+	// is in the control file the build generated.
+	if version == "unknown" || strings.Contains(version, "@") {
+		if built := bottle.ControlVersion(extName, files); built != "" {
+			version = built
+		}
 	}
 
 	manifest := bottle.Manifest{

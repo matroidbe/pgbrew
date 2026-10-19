@@ -123,3 +123,22 @@ func belongsTo(extension, archivePath string) bool {
 	}
 	return false
 }
+
+// ControlVersion returns default_version from the extension's control file
+// among a bottle's files, or "" when there is none. The staged control file is
+// the one the build generated, so it holds a real version even when the
+// source only had a template.
+func ControlVersion(extension string, files map[string][]byte) string {
+	content, ok := files[path.Join(ShareDir, "extension", extension+".control")]
+	if !ok {
+		return ""
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != "default_version" {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(value), `'"`)
+	}
+	return ""
+}

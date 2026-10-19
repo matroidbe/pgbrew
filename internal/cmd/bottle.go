@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -143,6 +144,22 @@ func runBottle(cmd *cobra.Command, args []string) error {
 		BuildSystem: b.Name(),
 	}
 
+	// Record the libraries the bottle links from outside the OS, so an install
+	// on a machine without them refuses instead of the server failing to load.
+	if runtime.GOOS == "darwin" {
+		staged := map[string]string{}
+		for name := range files {
+			if strings.HasPrefix(name, bottle.LibDir+"/") {
+				staged[name] = filepath.Join(stageRoot, pkgLibDir, strings.TrimPrefix(name, bottle.LibDir+"/"))
+			}
+		}
+		reqs, err := bottle.RuntimeRequirements(staged)
+		if err != nil {
+			return fmt.Errorf("reading the libraries %s links: %w", extName, err)
+		}
+		manifest.Requires = reqs
+	}
+
 	// Carry the declared server configuration inside the bottle. A bottle
 	// install has no source tree to read it from, and an extension whose
 	// library is never preloaded silently does nothing.
@@ -211,6 +228,10 @@ func installFromBottle(source, wantName string) error {
 				"A PostgreSQL extension is loaded into the server process, so the major\n"+
 				"version, OS and architecture all have to match. Build from source instead.",
 			b.Manifest.Target(), pgMajor, runtime.GOOS, runtime.GOARCH)
+	}
+
+	if err := checkRuntimeRequirements(b.Manifest); err != nil {
+		return err
 	}
 
 	pkgLibDir, err := pgConfigValue(pgConfig, "--pkglibdir")
@@ -289,4 +310,59 @@ func pgConfigValue(pgConfig, flag string) (string, error) {
 		return "", fmt.Errorf("could not read %s from %s", flag, pgConfig)
 	}
 	return value, nil
+}
+
+// checkRuntimeRequirements refuses a bottle whose libraries link something
+// this machine does not have: PostgreSQL would only find out when it loads
+// the library, as "image not found" in the middle of CREATE EXTENSION or at
+// server start. --install-deps installs the Homebrew formulae instead, and
+// --skip-dep-check installs regardless.
+func checkRuntimeRequirements(m bottle.Manifest) error {
+	missing := bottle.MissingRequirements(m.Requires)
+	if len(missing) == 0 || skipDepChecks {
+		return nil
+	}
+
+	var formulae []string
+	seen := map[string]bool{}
+	unknown := false
+	for _, r := range missing {
+		if r.Formula == "" {
+			unknown = true
+		} else if !seen[r.Formula] {
+			seen[r.Formula] = true
+			formulae = append(formulae, r.Formula)
+		}
+	}
+
+	if installDeps && !unknown && sysdeps.Brew.Available() {
+		bin, args := sysdeps.Brew.InstallCommand(formulae)
+		fmt.Printf("Installing what %s links: %s %s\n", m.Name, bin, strings.Join(args, " "))
+		c := exec.Command(bin, args...)
+		c.Stdout, c.Stderr = os.Stdout, os.Stderr
+		if err := c.Run(); err != nil {
+			return fmt.Errorf("installing %s: %w", strings.Join(formulae, " "), err)
+		}
+		if still := bottle.MissingRequirements(missing); len(still) > 0 {
+			return fmt.Errorf("%s still links %s, which is not here after installing %s",
+				m.Name, still[0].Path, strings.Join(formulae, " "))
+		}
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s links libraries that are not on this machine:\n", m.Name)
+	for _, r := range missing {
+		if r.Formula != "" {
+			fmt.Fprintf(&b, "  %s  (Homebrew: %s)\n", r.Path, r.Formula)
+		} else {
+			fmt.Fprintf(&b, "  %s\n", r.Path)
+		}
+	}
+	if len(formulae) > 0 {
+		fmt.Fprintf(&b, "Install them with: brew install %s\n", strings.Join(formulae, " "))
+		b.WriteString("or let pgx do it: pgx install --install-deps --bottle ...\n")
+	}
+	b.WriteString("(--skip-dep-check installs anyway; the server will fail to load the library.)")
+	return fmt.Errorf("%s", b.String())
 }

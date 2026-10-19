@@ -18,7 +18,9 @@ type InstallOptions struct {
 	Env []string
 
 	// BuildVars are KEY=VALUE pairs the user handed to the build system itself:
-	// make command-line variables for PGXS, -D cache entries for CMake. Unlike
+	// make command-line variables for PGXS, -D cache entries for CMake,
+	// configure variables for autotools. A "--option[=value]" entry is a
+	// configure option, which only autotools accepts. Unlike
 	// Env they override what the build files assign, which is the only way to
 	// replace a path PGXS hard-codes (BISON = /usr/bin/bison).
 	BuildVars []string
@@ -54,7 +56,7 @@ type Builder interface {
 // order is explicit rather than left to init(), which runs in file-name order:
 // a project can carry more than one build system (a PGXS Makefile beside a
 // CMakeLists.txt), and the more specific one has to win.
-var registeredBuilders = []Builder{&PgrxBuilder{}, &PgxsBuilder{}, &CMakeBuilder{}}
+var registeredBuilders = []Builder{&PgrxBuilder{}, &PgxsBuilder{}, &CMakeBuilder{}, &AutotoolsBuilder{}}
 
 // DetectBuilder finds the appropriate builder for the given directory
 func DetectBuilder(dir string) (Builder, error) {
@@ -75,10 +77,18 @@ func ListBuilders() []string {
 	return names
 }
 
-// ValidateBuildVars checks each --build-var is KEY=VALUE with a name both make
-// and CMake accept, so a typo fails before anything is cloned or built.
+// ValidateBuildVars checks each --build-var is KEY=VALUE with a name make,
+// CMake and configure all accept, or a configure option (--with-x[=value]),
+// so a typo fails before anything is cloned or built.
 func ValidateBuildVars(vars []string) error {
 	for _, v := range vars {
+		if opt, ok := strings.CutPrefix(v, "--"); ok {
+			name, _, _ := strings.Cut(opt, "=")
+			if !validOptionName(name) {
+				return fmt.Errorf("%q: invalid configure option", v)
+			}
+			continue
+		}
 		key, _, ok := strings.Cut(v, "=")
 		if !ok {
 			return fmt.Errorf("%q: expected KEY=VALUE", v)
@@ -103,4 +113,27 @@ func validBuildVarName(name string) bool {
 		}
 	}
 	return true
+}
+
+func validOptionName(name string) bool {
+	if name == "" || name[0] == '-' {
+		return false
+	}
+	for _, r := range name {
+		if r != '-' && r != '_' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// rejectConfigureOptions refuses a "--option" build var for a builder with no
+// configure script to hand it to.
+func rejectConfigureOptions(builder string, vars []string) error {
+	for _, v := range vars {
+		if strings.HasPrefix(v, "--") {
+			return fmt.Errorf("--build-var %s is a configure option; this is a %s project, which takes KEY=VALUE", v, builder)
+		}
+	}
+	return nil
 }

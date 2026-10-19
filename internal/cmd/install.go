@@ -36,6 +36,7 @@ Supported extension types:
   - pgrx (Rust): Projects with Cargo.toml containing pgrx dependency
   - pgxs (C):    Projects with Makefile using PGXS and a .control file
   - cmake (C):   Projects with a CMakeLists.txt using pg_config and a .control(.in) file
+  - autotools (C): Projects with a ./configure using pg_config (e.g. PostGIS)
 
 Examples:
   pgx install github.com/pgvector/pgvector
@@ -61,7 +62,7 @@ func init() {
 	installCmd.Flags().BoolVar(&useSudo, "sudo", false, "Use sudo for installation (needed for system PostgreSQL)")
 	installCmd.Flags().StringSliceVar(&features, "features", nil, "Additional Cargo features to enable (pgrx only, comma-separated)")
 	installCmd.Flags().StringArrayVar(&buildVars, "build-var", nil, buildVarHelp)
-	installCmd.Flags().BoolVar(&installDeps, "install-deps", false, "Install missing system dependencies with the platform package manager")
+	installCmd.Flags().BoolVar(&installDeps, "install-deps", false, "Install missing system dependencies (and the Homebrew formulae a bottle links) with the platform package manager")
 	installCmd.Flags().StringVar(&depsVia, "deps-via", "", depsViaHelp)
 	installCmd.Flags().BoolVar(&skipDepChecks, "skip-dep-check", false, "Skip the system dependency check")
 	installCmd.Flags().BoolVar(&skipToolchainCheck, "skip-toolchain-check", false, "Skip the cargo configuration toolchain check")

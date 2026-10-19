@@ -426,8 +426,8 @@ func TestBelongsTo(t *testing.T) {
 		{"lib/pg_other.so", false},
 		{"share/extension/pg_other--1.0.sql", false},
 	} {
-		if got := belongsTo("pg_solid", tc.path); got != tc.want {
-			t.Errorf("belongsTo(pg_solid, %q) = %v, want %v", tc.path, got, tc.want)
+		if got := BelongsTo("pg_solid", tc.path); got != tc.want {
+			t.Errorf("BelongsTo(pg_solid, %q) = %v, want %v", tc.path, got, tc.want)
 		}
 	}
 }

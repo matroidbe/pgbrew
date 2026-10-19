@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/matroidbe/pgbrew/internal/bottle"
 	"github.com/matroidbe/pgbrew/internal/cellar"
 	"github.com/spf13/cobra"
 )
@@ -65,31 +66,11 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 
 	extDir := filepath.Join(shareDir, "extension")
 
-	// Find extension files
-	var files []string
-
-	// .so file from lib directory
-	soFile := filepath.Join(libDir, name+".so")
-	if _, err := os.Stat(soFile); err == nil {
-		files = append(files, soFile)
+	var recorded *cellar.Entry
+	if tracked {
+		recorded = entry
 	}
-
-	// .control file
-	controlFile := filepath.Join(extDir, name+".control")
-	if _, err := os.Stat(controlFile); err == nil {
-		files = append(files, controlFile)
-	}
-
-	// SQL files (pattern: name--*.sql)
-	sqlPattern := filepath.Join(extDir, name+"--*.sql")
-	sqlFiles, _ := filepath.Glob(sqlPattern)
-	files = append(files, sqlFiles...)
-
-	// Also try name.sql (some extensions use this)
-	sqlFile := filepath.Join(extDir, name+".sql")
-	if _, err := os.Stat(sqlFile); err == nil {
-		files = append(files, sqlFile)
-	}
+	files := installedFiles(name, recorded, libDir, extDir)
 
 	if len(files) == 0 {
 		fmt.Println("No extension files found.")
@@ -175,6 +156,45 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	removePostgresConfig(name)
 
 	return nil
+}
+
+// installedFiles lists the files of an installed extension. A bottle install
+// recorded exactly what it placed; otherwise the files are found by name, with
+// the rule bottles are packed by: <name>.so or .dylib (PostgreSQL 16+ on
+// macOS), a versioned <name>-<x>.so/.dylib, <name>.control and <name>--*.sql.
+// Only files inside libDir or extDir are ever returned, whatever the record
+// says.
+func installedFiles(name string, entry *cellar.Entry, libDir, extDir string) []string {
+	inside := func(p string) bool {
+		dir := filepath.Dir(p)
+		return dir == filepath.Clean(libDir) || dir == filepath.Clean(extDir)
+	}
+
+	var files []string
+	if entry != nil && len(entry.Files) > 0 {
+		for _, f := range entry.Files {
+			if !inside(f) {
+				continue
+			}
+			if info, err := os.Lstat(f); err == nil && info.Mode().IsRegular() {
+				files = append(files, f)
+			}
+		}
+		return files
+	}
+
+	for _, dir := range []string{libDir, extDir} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.Type().IsRegular() && bottle.BelongsTo(name, e.Name()) {
+				files = append(files, filepath.Join(dir, e.Name()))
+			}
+		}
+	}
+	return files
 }
 
 // findDatabasesWithExtension returns a list of database names that have the extension installed

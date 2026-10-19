@@ -32,6 +32,11 @@ type Entry struct {
 	// install was built with, so `pgx update` rebuilds it the same way.
 	Features  []string `json:"features,omitempty"`
 	BuildVars []string `json:"build_vars,omitempty"`
+
+	// Files are the absolute paths a bottle install placed, so uninstall
+	// removes exactly those. Empty for a source install, whose files the
+	// build system places.
+	Files []string `json:"files,omitempty"`
 }
 
 // Cellar manages installed extensions.

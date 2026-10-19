@@ -490,6 +490,12 @@ pgx bottle ./postgis-3.6.4 --build-var --without-raster
 A source tree can define several extensions. pgx bottles the main one, the
 shortest name among its control files (`postgis`, not `postgis_raster`).
 
+### Libraries named by `module_pathname`
+
+A bottle takes the files named after its extension, plus the library its
+control file loads when that name differs: `plpython3u.control` says
+`module_pathname = '$libdir/plpython3'`, so `lib/plpython3.dylib` goes in.
+
 ## Installing to System PostgreSQL
 
 System-installed PostgreSQL typically has extension directories owned by root. Use the `--sudo` flag to install with elevated permissions:

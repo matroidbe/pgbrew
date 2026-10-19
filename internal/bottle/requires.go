@@ -19,15 +19,31 @@ func LinkedLibraries(file string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A dylib (what pgrx builds) lists its own install name first, which is
+	// the build machine's target/ path; a bundle (what PGXS builds) has none.
+	// It names the file itself, not something it needs.
+	self := ""
+	if id, err := exec.Command("otool", "-D", file).Output(); err == nil {
+		if lines := strings.Split(strings.TrimSpace(string(id)), "\n"); len(lines) > 1 {
+			self = strings.TrimSpace(lines[1])
+		}
+	}
+	return parseOtoolL(string(out), self), nil
+}
+
+// parseOtoolL extracts the libraries from `otool -L` output, leaving out the
+// file's own install name, the OS's libraries and relative references.
+func parseOtoolL(out, self string) []string {
 	var libs []string
-	for _, line := range strings.Split(string(out), "\n")[1:] {
+	for _, line := range strings.Split(out, "\n")[1:] {
 		lib, _, _ := strings.Cut(strings.TrimSpace(line), " (")
-		if !strings.HasPrefix(lib, "/") || strings.HasPrefix(lib, "/usr/lib/") || strings.HasPrefix(lib, "/System/") {
+		if lib == self || !strings.HasPrefix(lib, "/") ||
+			strings.HasPrefix(lib, "/usr/lib/") || strings.HasPrefix(lib, "/System/") {
 			continue
 		}
 		libs = append(libs, lib)
 	}
-	return libs, nil
+	return libs
 }
 
 var homebrewPath = regexp.MustCompile(`^(?:/opt/homebrew|/usr/local)/(?:opt|Cellar)/([^/]+)/`)

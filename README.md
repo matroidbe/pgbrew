@@ -1,6 +1,6 @@
 # pgbrew
 
-Homebrew-inspired package manager for PostgreSQL extensions. Supports **pgrx** (Rust), **PGXS** (C) and **CMake** (C) extensions.
+Homebrew-inspired package manager for PostgreSQL extensions. Supports **pgrx** (Rust), **PGXS** (C), **CMake** (C) and **autotools** (C, `./configure`) extensions.
 
 ## Installation
 
@@ -91,6 +91,27 @@ pgx install --bottle https://example.com/bottles/pg_solid-0.2.0-pg16-linux-amd64
 
 Publish the file wherever you like — a GitHub release, an object store, a file
 share.
+
+### Libraries a bottle needs
+
+A bottle carries the extension's own files, not the libraries they link. When
+`pgx bottle` runs on macOS, it reads each library with `otool -L` and records
+every absolute path outside the OS (`/usr/lib`, `/System`) in the manifest, with
+the Homebrew formula the path belongs to. A PostGIS bottle records Homebrew's
+GEOS, PROJ, GDAL, json-c and protobuf-c this way.
+
+`pgx install --bottle` checks those paths before writing anything. If one is
+missing, it refuses and names the formulae:
+
+```
+postgis links libraries that are not on this machine:
+  /opt/homebrew/opt/geos/lib/libgeos_c.1.dylib  (Homebrew: geos)
+Install them with: brew install geos
+```
+
+`--install-deps` runs that `brew install` for you; `--skip-dep-check` installs
+anyway. A Linux bottle records nothing: its libraries name sonames, which the
+loader searches for, so there is no fixed path to check.
 
 ### Why the target is in the filename
 
@@ -446,6 +467,29 @@ pgx bottle ./timescaledb --build-var REGRESS_CHECKS=OFF --build-var TAP_CHECKS=O
   --build-var WARNINGS_AS_ERRORS=OFF --build-var OPENSSL_ROOT_DIR=$(brew --prefix openssl)
 ```
 
+### Autotools (`./configure`) projects
+
+A project whose PGXS Makefile only exists after `./configure`, such as PostGIS,
+is built by running `autogen.sh` (for a git checkout without `configure`), then
+`./configure`, `make` and `make install`. pgx always passes the pg_config it
+builds against, as `--with-pgconfig` and `PG_CONFIG`. It also passes
+PostgreSQL's own `CPPFLAGS` and `LDFLAGS` (`pg_config --cppflags/--ldflags`),
+because a configure script usually takes only the server include directory
+from pg_config. Homebrew's PostgreSQL is built with NLS, so its headers include
+Homebrew gettext's `libintl.h`, and without those flags nothing compiles.
+
+`--build-var` entries are configure arguments here: `KEY=VALUE` is a configure
+variable (`CPPFLAGS=...` replaces the default), and `--option[=value]` is a
+configure option, which only autotools accepts.
+
+```bash
+pgx bottle ./postgis-3.6.4                       # the release tarball, configure included
+pgx bottle ./postgis-3.6.4 --build-var --without-raster
+```
+
+A source tree can define several extensions. pgx bottles the main one, the
+shortest name among its control files (`postgis`, not `postgis_raster`).
+
 ## Installing to System PostgreSQL
 
 System-installed PostgreSQL typically has extension directories owned by root. Use the `--sudo` flag to install with elevated permissions:
@@ -531,6 +575,8 @@ the whole pass.
    - **PGXS (C)**: `Makefile` with PGXS + `.control` file
    - **CMake (C)**: `CMakeLists.txt` that uses `pg_config` + a `.control` or
      `.control.in` file. Configured into `build-pgx/` in the source tree
+   - **Autotools (C)**: a `configure` (or `configure.ac` + `autogen.sh`) that
+     uses `pg_config` + a `.control(.in)` file within three levels
 3. For pgrx: Automatically installs the correct `cargo-pgrx` version
 4. Builds and installs the extension
 5. Tracks installation in `~/.pgbrew/installed.json`

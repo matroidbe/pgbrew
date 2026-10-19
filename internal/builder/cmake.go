@@ -89,6 +89,9 @@ func (b *CMakeBuilder) GetVersion(dir string) (string, error) {
 
 // configure runs the CMake configure and build steps.
 func (b *CMakeBuilder) configure(dir string, opts InstallOptions, buildEnv []string) error {
+	if err := rejectConfigureOptions("CMake", opts.BuildVars); err != nil {
+		return err
+	}
 	pgConfig := opts.PgConfig
 	if pgConfig == "" {
 		pgConfig = os.Getenv("PG_CONFIG")

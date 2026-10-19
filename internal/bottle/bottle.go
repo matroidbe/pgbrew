@@ -69,6 +69,20 @@ type Manifest struct {
 	// inside the bottle because a bottle install has no source tree to consult,
 	// and an extension whose library is not preloaded silently does nothing.
 	Postgres *PostgresConfig `json:"postgresql,omitempty"`
+
+	// Requires lists the libraries outside the operating system that the
+	// bottle's own libraries link by absolute path (a Homebrew GEOS, say).
+	// A bottle cannot carry them, so an install checks they are there instead
+	// of letting the server fail at load time.
+	Requires []RuntimeLibrary `json:"requires,omitempty"`
+}
+
+// RuntimeLibrary is one library a bottle needs on the target machine.
+type RuntimeLibrary struct {
+	Path string `json:"path"`
+	// Formula is the Homebrew formula that provides Path, when the path says
+	// so (/opt/homebrew/opt/<formula>/...).
+	Formula string `json:"formula,omitempty"`
 }
 
 // PostgresConfig is the server configuration an extension requires, as carried

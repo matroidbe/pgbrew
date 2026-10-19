@@ -571,3 +571,28 @@ func TestControlVersion(t *testing.T) {
 		t.Errorf("ControlVersion of a missing control file = %q, want empty", got)
 	}
 }
+
+func TestHomebrewFormula(t *testing.T) {
+	for lib, want := range map[string]string{
+		"/opt/homebrew/opt/geos/lib/libgeos_c.1.dylib":                 "geos",
+		"/opt/homebrew/opt/postgresql@18/lib/postgresql/libpq.5.dylib": "postgresql@18",
+		"/usr/local/Cellar/proj/9.9.0/lib/libproj.25.dylib":            "proj",
+		"/opt/local/lib/libgeos_c.dylib":                               "",
+	} {
+		if got := HomebrewFormula(lib); got != want {
+			t.Errorf("HomebrewFormula(%q) = %q, want %q", lib, got, want)
+		}
+	}
+}
+
+func TestMissingRequirements(t *testing.T) {
+	here := filepath.Join(t.TempDir(), "libhere.dylib")
+	if err := os.WriteFile(here, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reqs := []RuntimeLibrary{{Path: here}, {Path: "/nonexistent/libgone.dylib", Formula: "gone"}}
+	missing := MissingRequirements(reqs)
+	if len(missing) != 1 || missing[0].Formula != "gone" {
+		t.Errorf("MissingRequirements = %+v, want only the missing one", missing)
+	}
+}

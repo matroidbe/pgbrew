@@ -96,6 +96,9 @@ func parseControlVersion(controlPath string) (string, error) {
 
 // Install builds and installs the extension using make.
 func (b *PgxsBuilder) Install(dir string, opts InstallOptions) error {
+	if err := rejectConfigureOptions("PGXS", opts.BuildVars); err != nil {
+		return err
+	}
 	// Determine pg_config path
 	pgConfig := opts.PgConfig
 	if pgConfig == "" {
@@ -190,6 +193,9 @@ func (b *PgxsBuilder) NeedsSharedPreload(dir string) bool {
 // Package builds the extension and stages it under a temporary DESTDIR,
 // leaving the live PostgreSQL installation untouched. Returns the tree's root.
 func (b *PgxsBuilder) Package(dir string, opts InstallOptions) (string, error) {
+	if err := rejectConfigureOptions("PGXS", opts.BuildVars); err != nil {
+		return "", err
+	}
 	pgConfig := opts.PgConfig
 	if pgConfig == "" {
 		pgConfig = os.Getenv("PG_CONFIG")

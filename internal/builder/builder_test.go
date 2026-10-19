@@ -167,3 +167,92 @@ func TestPgrxRejectsBuildVars(t *testing.T) {
 		t.Errorf("Package with build vars = %v, want a --build-var error", err)
 	}
 }
+
+// PostGIS: a configure script that asks for pg_config, control templates
+// under extensions/<name>/, and a root Makefile that is not PGXS.
+func postgisLikeTree(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"configure":                             "#!/bin/sh\n# checks for pg_config\n",
+		"Makefile":                              "all:\n\t@echo run configure first\n",
+		"GNUmakefile.in":                        "all:\n",
+		"extensions/postgis/postgis.control.in": "default_version = '@POSTGIS_LIB_VERSION@'\n",
+		"extensions/postgis_raster/postgis_raster.control.in":     "default_version = '@POSTGIS_LIB_VERSION@'\n",
+		"extensions/postgis_topology/postgis_topology.control.in": "default_version = '@POSTGIS_LIB_VERSION@'\n",
+	})
+	return dir
+}
+
+func TestDetectAutotoolsProjectAndItsMainExtension(t *testing.T) {
+	dir := postgisLikeTree(t)
+	b, err := DetectBuilder(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Name() != "autotools" {
+		t.Fatalf("detected %s, want autotools", b.Name())
+	}
+	if name, _ := b.GetExtensionName(dir); name != "postgis" {
+		t.Errorf("name = %q, want postgis (the shortest of the project's extensions)", name)
+	}
+	if v, err := b.GetVersion(dir); err == nil {
+		t.Errorf("GetVersion before configure = %q, want an error", v)
+	}
+	writeFiles(t, dir, map[string]string{"extensions/postgis/postgis.control": "default_version = '3.6.4'\n"})
+	if v, err := b.GetVersion(dir); err != nil || v != "3.6.4" {
+		t.Errorf("GetVersion after configure = %q, %v; want 3.6.4", v, err)
+	}
+}
+
+func TestAutotoolsIgnoresConfigureScriptsThatAreNotForPostgres(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"configure": "#!/bin/sh\n", "x.control": "default_version = '1'\n"})
+	if (&AutotoolsBuilder{}).Detect(dir) {
+		t.Error("a configure script that never mentions pg_config was detected as an extension")
+	}
+}
+
+func TestConfigureArgs(t *testing.T) {
+	got := configureArgs("/pg/bin/pg_config", []string{"--without-raster", "--with-gdalconfig=/x/gdal-config", "CFLAGS=-O2"},
+		"-I/gettext/include", "-L/gettext/lib", "/pg/bin")
+	want := []string{"--with-pgconfig=/pg/bin/pg_config", "PG_CONFIG=/pg/bin/pg_config",
+		"--bindir=/pg/bin", "CPPFLAGS=-I/gettext/include", "LDFLAGS=-L/gettext/lib",
+		"--without-raster", "--with-gdalconfig=/x/gdal-config", "CFLAGS=-O2"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("configureArgs = %v\nwant %v", got, want)
+	}
+
+	// A CPPFLAGS build var replaces PostgreSQL's, rather than being appended.
+	got = configureArgs("/pg/bin/pg_config", []string{"CPPFLAGS=-I/mine", "--bindir=/b"}, "-I/gettext/include", "", "/pg/bin")
+	want = []string{"--with-pgconfig=/pg/bin/pg_config", "PG_CONFIG=/pg/bin/pg_config", "CPPFLAGS=-I/mine", "--bindir=/b"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("configureArgs with CPPFLAGS = %v\nwant %v", got, want)
+	}
+}
+
+func TestConfigureOptionsAreForAutotoolsOnly(t *testing.T) {
+	if err := ValidateBuildVars([]string{"--without-raster", "--with-gdalconfig=/x"}); err != nil {
+		t.Errorf("configure options rejected: %v", err)
+	}
+	for _, bad := range []string{"--", "---x", "--a b"} {
+		if err := ValidateBuildVars([]string{bad}); err == nil {
+			t.Errorf("ValidateBuildVars(%q) accepted it", bad)
+		}
+	}
+	_, err := (&PgxsBuilder{}).Package(t.TempDir(), InstallOptions{BuildVars: []string{"--without-raster"}})
+	if err == nil || !strings.Contains(err.Error(), "configure option") {
+		t.Errorf("PGXS with a configure option = %v, want a refusal", err)
+	}
+	_, err = (&CMakeBuilder{}).Package(t.TempDir(), InstallOptions{BuildVars: []string{"--without-raster"}})
+	if err == nil || !strings.Contains(err.Error(), "configure option") {
+		t.Errorf("CMake with a configure option = %v, want a refusal", err)
+	}
+}
+
+func TestWithoutSysroot(t *testing.T) {
+	in := "-isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk -I/opt/homebrew/opt/gettext/include -isysroot/x -I/y"
+	if got := withoutSysroot(in); got != "-I/opt/homebrew/opt/gettext/include -I/y" {
+		t.Errorf("withoutSysroot = %q", got)
+	}
+}

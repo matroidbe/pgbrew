@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -24,8 +25,13 @@ type Entry struct {
 	Version     string    `json:"version"`
 	Source      string    `json:"source"`
 	PgVersion   string    `json:"pg_version"`
-	BuildSystem string    `json:"build_system,omitempty"` // "pgrx" or "pgxs"
+	BuildSystem string    `json:"build_system,omitempty"` // "pgrx", "pgxs" or "cmake"
 	InstalledAt time.Time `json:"installed_at"`
+
+	// Features and BuildVars are the --features and --build-var a source
+	// install was built with, so `pgx update` rebuilds it the same way.
+	Features  []string `json:"features,omitempty"`
+	BuildVars []string `json:"build_vars,omitempty"`
 }
 
 // Cellar manages installed extensions.
@@ -117,7 +123,9 @@ func Add(entry Entry) error {
 	// install run without write access to the extension directory.
 	for _, e := range c.Entries {
 		if e.Name == entry.Name && e.Version == entry.Version &&
-			e.PgVersion == entry.PgVersion && e.BuildSystem == entry.BuildSystem {
+			e.PgVersion == entry.PgVersion && e.BuildSystem == entry.BuildSystem &&
+			sameOrigin(e.Source, entry.Source) && slices.Equal(e.Features, entry.Features) &&
+			slices.Equal(e.BuildVars, entry.BuildVars) {
 			return nil
 		}
 	}
@@ -188,4 +196,19 @@ func Remove(name string) error {
 
 	c.Entries = newEntries
 	return save(c)
+}
+
+// sameOrigin reports whether two installs came from the same kind of place.
+// The same bottle fetched from another path or URL is the same install; a
+// bottle replaced by a source build (or one source by another) is not, and
+// `pgx update` needs to know which it now is.
+func sameOrigin(a, b string) bool {
+	return a == b || (IsBottleSource(a) && IsBottleSource(b))
+}
+
+// IsBottleSource reports whether a recorded source is a bottle (a file or an
+// http(s) URL) rather than something pgx builds.
+func IsBottleSource(source string) bool {
+	return strings.HasSuffix(source, ".tar.gz") ||
+		strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://")
 }
